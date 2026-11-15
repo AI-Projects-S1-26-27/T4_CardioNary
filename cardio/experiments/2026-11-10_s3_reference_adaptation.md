@@ -1,5 +1,11 @@
 # S3 adaptation with the reference model
 
+The official published-checkpoint run is now in
+[`reports/heart_tta.json`](../../reports/heart_tta.json). This note preserves
+the earlier reference run; see the
+[15 November delivery audit](2026-11-15_result_delivery_audit.md) for the
+completion and verification record.
+
 The public-data run used the same float reference weights and training
 normalisation as the provisional S2 run. It completed 140 draws across
 BMD-HS, CirCor, 5 dB white noise, and 300 Hz low-pass Yaseen. Each site had
