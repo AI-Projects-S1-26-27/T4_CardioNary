@@ -1,0 +1,23 @@
+{
+  "synthetic_test": {
+    "overconfident_T": 3.4914,
+    "underconfident_T": 0.01,
+    "well_calibrated_T": 0.9856
+  },
+  "cnn_oof_kermany": {
+    "n_samples": 5856,
+    "temperature_T": 0.9442,
+    "nll_before": 0.1191,
+    "nll_after": 0.1186,
+    "ece_before_pct": 1.16,
+    "ece_after_pct": 0.62
+  },
+  "kermany_plr": {
+    "n_samples": 5856,
+    "temperature_T": 1.0045,
+    "nll_before": 0.3025,
+    "nll_after": 0.3025,
+    "ece_before_pct": 0.91,
+    "ece_after_pct": 0.83
+  }
+}
