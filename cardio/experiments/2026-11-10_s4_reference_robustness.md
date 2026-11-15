@@ -28,3 +28,16 @@ The audit replay reproduced the JSON exactly. The audit also measured each
 noise level on a real clip, verified the filter cutoffs passed to the runner,
 and recomputed accuracy from all 75 draw counts. All five classes were present
 in the scoring panel, and every adaptation batch was disjoint from it.
+
+## Published checkpoint run, 15 November
+
+The updated `cardio` branch includes the published float model and matching
+training normalisation report. Their hashes match the reference sweep inputs.
+Running `python -m cardio.run_all --only robustness` produced the required
+[`reports/heart_robustness.json`](../../reports/heart_robustness.json). Every
+condition, per-draw score, confidence interval, and guard decision reproduced
+the reference report. This report records the published team checkpoint and
+its paired normalisation report hashes.
+
+The full suite on the integrated branch passed 145 tests and 7 subtests, with
+4 skips for unavailable caches or an inapplicable image-windowing check.
