@@ -65,9 +65,9 @@ dashboard shows the reason and no heart result. `result.pcm16()` feeds
 `core.spectrogram.spectrogram_png`, and `result.close_call` names the top two
 classes when they are less than 0.05 apart.
 
-Until `heart_fusion()` and `reports/heart_fusion_params.json` exist, the CNN vote
-counts alone with weight 1, and T = 1 until `"T"` is in that file or in
-`reports/heart_calibration.json`.
+T comes from `reports/heart_calibration.json` (`"final_T"`, 0.504), or from `"T"`
+in `reports/heart_fusion_params.json` once that file exists. Until
+`heart_fusion()` and that file exist, the CNN vote counts alone with weight 1.
 
 Every result carries a 95% bootstrap interval over patients, from
 `cardio.eval.intervals`, which wraps `cardio.eval.metrics`.
