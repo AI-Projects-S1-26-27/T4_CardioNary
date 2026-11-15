@@ -49,5 +49,7 @@ paths outside a dataset root fail explicitly. Default dataset locations produce
 portable manifests. External `--root` paths are supported but generate absolute
 paths and should not be committed.
 
-Only manifests and code belong in Git. Raw datasets, caches, and trained weights
-remain local. Downloaded source license files are retained with the datasets.
+Commit the public-data manifests and the small derived characteristics/results
+files in `reports/`. Raw recordings and log-mel caches remain local. Trained
+weights follow the exceptions in `docs/BRANCHING.md`. Downloaded source license
+files are retained with the datasets.
