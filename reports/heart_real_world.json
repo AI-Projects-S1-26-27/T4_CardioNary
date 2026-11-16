@@ -1,6 +1,6 @@
 {
   "what": "Clinic recordings (10 patients x 5 positions), measured without labels with the Yaseen-trained heart CNN. Aggregates only, per the data's handling rules.",
-  "run_on": "2026-11-02",
+  "run_on": "2026-11-16",
   "model": {
     "float": "chiron_cardio_v1_float.keras",
     "int8": "chiron_cardio_v1_int8.tflite",
@@ -178,7 +178,7 @@
         "adaptation_recordings": 25,
         "adaptation_windows": 75,
         "measured_recordings": 25,
-        "seconds_to_adapt_including_model_load": 0.2,
+        "seconds_to_adapt_including_model_load": 0.21,
         "top_class_share_on_adaptation_recordings": {
           "before": 0.72,
           "after": 0.44
@@ -189,7 +189,7 @@
         "adaptation_recordings": 25,
         "adaptation_windows": 75,
         "measured_recordings": 25,
-        "seconds_to_adapt_including_model_load": 0.14,
+        "seconds_to_adapt_including_model_load": 0.18,
         "top_class_share_on_adaptation_recordings": {
           "before": 0.52,
           "after": 0.44
