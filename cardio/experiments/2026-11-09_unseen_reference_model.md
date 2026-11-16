@@ -1,5 +1,12 @@
 # S2 unseen-dataset check with the reference model
 
+The official published-checkpoint run is now in
+[`reports/heart_unseen.json`](../../reports/heart_unseen.json), with public
+characteristics in `reports/heart_features_bmdhs.csv` and
+`reports/heart_features_physionet.csv`. The 15 November rerun reproduced the
+scores and intervals below. This note preserves the earlier reference run;
+see the [delivery audit](2026-11-15_result_delivery_audit.md) for verification.
+
 The S2 runner evaluated the float reference model from `main` at `751d275` on
 BMD-HS and CirCor. This is a provisional baseline. The model and normalisation
 report hashes, cohort counts, and 95% patient bootstrap intervals are in
