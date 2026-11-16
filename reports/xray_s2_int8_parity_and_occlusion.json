@@ -1,0 +1,84 @@
+{
+  "model": "chiron_pulmo_v1",
+  "seed": 0,
+  "kermany_fold0_agreement": {
+    "n_images": 1239,
+    "n_patients": 558,
+    "item_agreement": 0.9895,
+    "item_agreement_ci95": [
+      0.9839,
+      0.9952
+    ],
+    "patient_agreement": 0.9839,
+    "patient_agreement_ci95": [
+      0.9731,
+      0.9929
+    ],
+    "discordant_images": 13,
+    "discordant_patients": 9
+  },
+  "kermany_fold0_occlusion_peak_regions": {
+    "0": {
+      "lower / central": 15,
+      "lower / patient left": 0,
+      "lower / patient right": 15,
+      "middle / central": 0,
+      "middle / patient left": 103,
+      "middle / patient right": 1,
+      "upper / central": 139,
+      "upper / patient left": 18,
+      "upper / patient right": 50
+    },
+    "1": {
+      "lower / central": 79,
+      "lower / patient left": 12,
+      "lower / patient right": 12,
+      "middle / central": 402,
+      "middle / patient left": 11,
+      "middle / patient right": 250,
+      "upper / central": 61,
+      "upper / patient left": 40,
+      "upper / patient right": 31
+    }
+  },
+  "rsna_agreement": {
+    "n_images": 14863,
+    "n_patients": 14863,
+    "item_agreement": 0.9611,
+    "item_agreement_ci95": [
+      0.9578,
+      0.9641
+    ],
+    "patient_agreement": 0.9611,
+    "patient_agreement_ci95": [
+      0.9581,
+      0.9641
+    ],
+    "discordant_images": 578,
+    "discordant_patients": 578
+  },
+  "rsna_occlusion_peak_regions": {
+    "0": {
+      "lower / central": 0,
+      "lower / patient left": 0,
+      "lower / patient right": 1,
+      "middle / central": 4,
+      "middle / patient left": 23,
+      "middle / patient right": 0,
+      "upper / central": 19,
+      "upper / patient left": 12,
+      "upper / patient right": 1
+    },
+    "1": {
+      "lower / central": 10,
+      "lower / patient left": 1,
+      "lower / patient right": 1,
+      "middle / central": 24,
+      "middle / patient left": 1,
+      "middle / patient right": 3,
+      "upper / central": 0,
+      "upper / patient left": 0,
+      "upper / patient right": 0
+    }
+  }
+}
