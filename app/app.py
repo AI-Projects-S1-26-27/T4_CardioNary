@@ -15,7 +15,14 @@ import io
 import json
 import math
 from pathlib import Path
+import sys
 from typing import Optional
+
+# Ensure repository root is on sys.path so core, cardio, and lung can be imported
+# when run via `streamlit run app/app.py`
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import matplotlib
 matplotlib.use("Agg")
@@ -36,8 +43,6 @@ from core.contracts import (
 )
 from cardio.predict import analyse_heart
 from lung.predict import analyse_xray
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_DATA_DIR = REPO_ROOT / "Test_Data"
 
 # ---------------------------------------------------------------------------
