@@ -256,22 +256,25 @@ def main() -> int:
 
     # Unseen RSNA cohort. For this non-corruption shift, recovery is undefined;
     # use delta from the unadapted RSNA baseline.
-    rsna_manifest, X_rsna = load_rsna()
-    results.append(
-        _dataset_result(
-            "rsna",
-            X_rsna,
-            rsna_manifest.label.to_numpy(int),
-            rsna_manifest.patient_id.astype(str).to_numpy(),
-            model=model,
-            mean=mean,
-            std=std,
-            sizes=tuple(args.sizes),
-            draws=args.draws,
-            seed=args.seed,
-            class_mix=True,
+    try:
+        rsna_manifest, X_rsna = load_rsna()
+        results.append(
+            _dataset_result(
+                "rsna",
+                X_rsna,
+                rsna_manifest.label.to_numpy(int),
+                rsna_manifest.patient_id.astype(str).to_numpy(),
+                model=model,
+                mean=mean,
+                std=std,
+                sizes=tuple(args.sizes),
+                draws=args.draws,
+                seed=args.seed,
+                class_mix=True,
+            )
         )
-    )
+    except FileNotFoundError as err:
+        print(f"[run_tta] RSNA cache not found ({err}); skipping RSNA cohort.")
 
     # Controlled shifts on Kermany fold 0, excluded from the final CNN training.
     X_all, y_all, patient_all, fold_all = load_kermany()
