@@ -35,7 +35,8 @@ Stages, each timed in milliseconds; the edge budget reports these times:
                              missing-vote rule
 
 Temperature T is read from reports/heart_fusion_params.json, key "T", and failing
-that from reports/heart_calibration.json, key "T". Until either exists T = 1 and
+that from reports/heart_calibration.json, where cardio/fusion/calibrate.py writes
+it as "final_T" (0.504 on the Yaseen out-of-fold file). Until either exists T = 1 and
 result.temperature is None, so the dashboard can say the probabilities are not yet
 calibrated. heart_fusion(p_cnn, features, metadata) receives p_cnn already
 calibrated, as 1 - p(Normal) after T, and the 17 characteristics as a dict.
@@ -135,11 +136,15 @@ def load_model() -> FinalModel:
 
 
 def temperature() -> float | None:
-    """T from the fusion parameters, else from the calibration report; None before either exists."""
+    """T from the fusion parameters, else from the calibration report; None before either exists.
+
+    The key is "T", or "final_T" as cardio/fusion/calibrate.py writes it.
+    """
     for path in (FUSION_PARAMS, CALIBRATION):
         if not path.exists():
             continue
-        T = json.loads(path.read_text(encoding="utf-8")).get("T")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        T = next((data[k] for k in ("T", "final_T") if data.get(k) is not None), None)
         if T is None:
             continue
         T = float(T)

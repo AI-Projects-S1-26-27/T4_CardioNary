@@ -80,6 +80,8 @@ def test_temperature_sharpens_or_softens_but_never_changes_the_winner():
 
 def test_temperature_is_read_from_fusion_parameters_first(no_fusion_files):
     assert predict.temperature() is None
+    predict.CALIBRATION.write_text('{"final_T": 0.5044, "fold_T": [0.45, 0.51]}')   # calibrate.py's key
+    assert predict.temperature() == 0.5044
     predict.CALIBRATION.write_text('{"T": 0.5}')
     assert predict.temperature() == 0.5
     predict.FUSION_PARAMS.write_text('{"T": 0.48, "weights": {}}')
