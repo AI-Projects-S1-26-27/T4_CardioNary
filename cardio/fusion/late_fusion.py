@@ -2,6 +2,11 @@
 
 Task 5: Combines the votes into p_h = w1*p_CNN + w2*p_LR + w3*p_M (w3 <= 0.3).
 Runs Comparison A (generalisation to PhysioNet) and Comparison B (metadata gain).
+
+Task 6: Adds the adapted model (adapt_bn) to Comparison A:
+- plain CNN
+- adapted CNN
+- adapted CNN plus feature vote
 """
 import csv
 import json
@@ -13,6 +18,7 @@ from sklearn.metrics import log_loss
 
 from core.contracts import FusedOutput
 from cardio.eval.intervals import metric_intervals
+from cardio.eval.real_world import adapt_bn
 from cardio.fusion.calibrate import calibrate_probabilities
 from cardio.fusion.votes import new_vote
 from cardio.model.final_model import CLASSES, FinalModel
@@ -72,6 +78,7 @@ def generate_physionet_cnn_probabilities() -> pd.DataFrame:
                 p = p.reshape(len(feats), -1).mean(axis=0)
                 rows.append({
                     "patient_id": r["patient_id"],
+                    "patient_id": str(r["patient_id"]),
                     "path": r["path"],
                     **{f"p_{k}": float(v) for k, v in zip(CLASSES, p)},
                 })
@@ -80,6 +87,69 @@ def generate_physionet_cnn_probabilities() -> pd.DataFrame:
     df.to_csv(out_csv, index=False)
     print(f"Saved {len(df)} PhysioNet CNN probability rows to {out_csv}")
     return df
+
+
+def run_physionet_adaptation(T: float) -> pd.DataFrame:
+    """Task 6: Split PhysioNet into two random halves (seed 0), adapt with 64 clips, and measure."""
+    print("\nRunning Task 6: Test-time batch-norm adaptation (adapt_bn)...")
+    manifest_path = Path("data/manifests/circor_manifest.csv")
+    rows = []
+    with open(manifest_path, encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            rows.append(r)
+
+    # Split patients into 2 random halves with seed 0
+    patients = sorted({r["patient_id"] for r in rows})
+    order = np.random.default_rng(0).permutation(len(patients))
+    half = len(patients) // 2
+    halves = [set(patients[i] for i in order[:half]), set(patients[i] for i in order[half:])]
+
+    model = FinalModel()
+    N_ADAPT = 64
+    adapted_predictions = {}
+
+    for i, adapt_on in enumerate(halves):
+        measure_on = halves[1 - i]
+        pool = [r for r in rows if r["patient_id"] in adapt_on]
+        pick = np.random.default_rng(0).permutation(len(pool))[:N_ADAPT]
+        pool_adapt = [pool[idx] for idx in sorted(pick)]
+
+        adapt_feats = []
+        for r in pool_adapt:
+            with np.load(r["cache_path"]) as c:
+                f = c["features"]
+                if len(f) > 0:
+                    adapt_feats.append(f)
+        windows = np.concatenate(adapt_feats)
+        adapted_model = adapt_bn(windows, model)
+
+        measure_rows = [r for r in rows if r["patient_id"] in measure_on]
+        for r in measure_rows:
+            with np.load(r["cache_path"]) as c:
+                f = c["features"]
+                if len(f) == 0:
+                    continue
+                p = np.asarray(adapted_model(model.normalise(f), training=False)).reshape(len(f), -1).mean(0)
+                adapted_predictions[r["path"]] = p
+
+    adapted_rows = []
+    for r in rows:
+        if r["path"] in adapted_predictions:
+            p = adapted_predictions[r["path"]]
+            adapted_rows.append({
+                "patient_id": str(r["patient_id"]),
+                "path": r["path"],
+                **{f"p_{k}": float(v) for k, v in zip(CLASSES, p)},
+            })
+
+    df_adapt = pd.DataFrame(adapted_rows)
+    P_adapt = df_adapt.filter(like="p_").to_numpy(dtype=float)
+    P_adapt = P_adapt / P_adapt.sum(axis=1, keepdims=True)
+    P_adapt_cal = calibrate_probabilities(P_adapt, T)
+    df_adapt["p_cnn_adapt"] = 1.0 - P_adapt_cal[:, 0]
+
+    patient_adapt = df_adapt.groupby("patient_id")["p_cnn_adapt"].mean().reset_index()
+    return patient_adapt
 
 
 def run_late_fusion():
@@ -118,6 +188,7 @@ def run_late_fusion():
 
     # 3. Load PhysioNet data
     df_cnn_phys = generate_physionet_cnn_probabilities()
+    df_cnn_phys["patient_id"] = df_cnn_phys["patient_id"].astype(str)
     P_phys = df_cnn_phys.filter(like="p_").to_numpy(dtype=float)
     P_phys = P_phys / P_phys.sum(axis=1, keepdims=True)
     P_phys_cal = calibrate_probabilities(P_phys, T)
@@ -133,6 +204,7 @@ def run_late_fusion():
     )
 
     feats_phys = pd.read_csv(reports_dir / "heart_features_physionet.csv")
+    feats_phys["patient_id"] = feats_phys["patient_id"].astype(str)
     patient_feats = feats_phys.groupby("patient_id")[feature_cols].mean().reset_index()
     patient_feats["p_lr"] = full_feat_model.predict_proba(
         patient_feats[feature_cols].to_numpy(dtype=float)
@@ -140,28 +212,40 @@ def run_late_fusion():
 
     # Load metadata vote probabilities and patient folds
     df_pm_phys = pd.read_csv(reports_dir / "heart_pm_physionet.csv")
+    df_pm_phys["patient_id"] = df_pm_phys["patient_id"].astype(str)
+
+    # Task 6: Adapted CNN probabilities
+    patient_cnn_adapt = run_physionet_adaptation(T)
 
     # Merge on patient_id (816 patients)
     merged = pd.merge(df_pm_phys, patient_cnn[["patient_id", "p_cnn"]], on="patient_id")
     merged = pd.merge(merged, patient_feats[["patient_id", "p_lr"]], on="patient_id")
+    merged = pd.merge(merged, patient_cnn_adapt[["patient_id", "p_cnn_adapt"]], on="patient_id")
 
     y_phys = merged["label"].to_numpy(dtype=int)
     groups_phys = merged["patient_id"].to_numpy()
     p_cnn_phys = merged["p_cnn"].to_numpy(dtype=float)
     p_lr_phys = merged["p_lr"].to_numpy(dtype=float)
     p_m_phys = merged["p_m"].to_numpy(dtype=float)
+    p_cnn_adapt_phys = merged["p_cnn_adapt"].to_numpy(dtype=float)
     folds_phys = merged["fold"].to_numpy(dtype=int)
 
     # 4. Comparison A: Generalisation
     p_compA_plain = p_cnn_phys
     p_compA_fused = w_yaseen[0] * p_cnn_phys + w_yaseen[1] * p_lr_phys
+    p_compA_adapted = p_cnn_adapt_phys
+    p_compA_adapted_fused = w_yaseen[0] * p_cnn_adapt_phys + w_yaseen[1] * p_lr_phys
 
     metrics_A_plain = metric_intervals(y_phys, p_compA_plain, groups_phys, ["macro_f1", "auroc"])
     metrics_A_fused = metric_intervals(y_phys, p_compA_fused, groups_phys, ["macro_f1", "auroc"])
+    metrics_A_adapted = metric_intervals(y_phys, p_compA_adapted, groups_phys, ["macro_f1", "auroc"])
+    metrics_A_adapted_fused = metric_intervals(y_phys, p_compA_adapted_fused, groups_phys, ["macro_f1", "auroc"])
 
     print("\n=== Comparison A: Generalisation (Yaseen -> PhysioNet) ===")
     print(f"Plain CNN AUROC: {metrics_A_plain['auroc']['estimate']:.4f} [{metrics_A_plain['auroc']['lower_95']:.4f}, {metrics_A_plain['auroc']['upper_95']:.4f}], F1: {metrics_A_plain['macro_f1']['estimate']:.4f}")
     print(f"Fused CNN+LR AUROC: {metrics_A_fused['auroc']['estimate']:.4f} [{metrics_A_fused['auroc']['lower_95']:.4f}, {metrics_A_fused['auroc']['upper_95']:.4f}], F1: {metrics_A_fused['macro_f1']['estimate']:.4f}")
+    print(f"Adapted CNN AUROC: {metrics_A_adapted['auroc']['estimate']:.4f} [{metrics_A_adapted['auroc']['lower_95']:.4f}, {metrics_A_adapted['auroc']['upper_95']:.4f}], F1: {metrics_A_adapted['macro_f1']['estimate']:.4f}")
+    print(f"Adapted CNN + Feature Vote AUROC: {metrics_A_adapted_fused['auroc']['estimate']:.4f} [{metrics_A_adapted_fused['auroc']['lower_95']:.4f}, {metrics_A_adapted_fused['auroc']['upper_95']:.4f}], F1: {metrics_A_adapted_fused['macro_f1']['estimate']:.4f}")
 
     # 5. Comparison B: Metadata Gain (Internal to PhysioNet across 5 folds)
     p_oof_2vote = np.zeros(len(merged))
@@ -209,6 +293,8 @@ def run_late_fusion():
         "comparison_A": {
             "plain_cnn": metrics_A_plain,
             "fused": metrics_A_fused,
+            "adapted_cnn": metrics_A_adapted,
+            "adapted_cnn_plus_feature_vote": metrics_A_adapted_fused,
         },
         "comparison_B": {
             "two_vote_weights_per_fold": [list(w) for w in w_folds_2vote],
@@ -223,6 +309,7 @@ def run_late_fusion():
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(out_data, fh, indent=2)
     print(f"\nSaved late fusion report to {out_path}")
+    print(f"\nSaved updated late fusion report to {out_path}")
 
     return out_data
 

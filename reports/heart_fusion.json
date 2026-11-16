@@ -36,6 +36,38 @@
         "valid_resamples": 1000,
         "resamples": 1000
       }
+    },
+    "adapted_cnn": {
+      "macro_f1": {
+        "estimate": 0.16393442622950818,
+        "lower_95": 0.14554973821989528,
+        "upper_95": 0.1815446339017051,
+        "valid_resamples": 1000,
+        "resamples": 1000
+      },
+      "auroc": {
+        "estimate": 0.693461666113508,
+        "lower_95": 0.6443774968513124,
+        "upper_95": 0.7363624409621297,
+        "valid_resamples": 1000,
+        "resamples": 1000
+      }
+    },
+    "adapted_cnn_plus_feature_vote": {
+      "macro_f1": {
+        "estimate": 0.16393442622950818,
+        "lower_95": 0.14554973821989528,
+        "upper_95": 0.1815446339017051,
+        "valid_resamples": 1000,
+        "resamples": 1000
+      },
+      "auroc": {
+        "estimate": 0.693461666113508,
+        "lower_95": 0.6443774968513124,
+        "upper_95": 0.7363624409621297,
+        "valid_resamples": 1000,
+        "resamples": 1000
+      }
     }
   },
   "comparison_B": {
