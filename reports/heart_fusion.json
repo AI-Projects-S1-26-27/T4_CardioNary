@@ -143,6 +143,13 @@
         "resamples": 1000
       }
     },
-    "auroc_gain": 0.07139538191645733
+    "auroc_gain": 0.07139538191645733,
+    "auroc_gain_interval": {
+      "estimate": 0.07139538191645733,
+      "lower_95": 0.03714893331554306,
+      "upper_95": 0.10634746333685538,
+      "valid_resamples": 1000,
+      "resamples": 1000
+    }
   }
 }

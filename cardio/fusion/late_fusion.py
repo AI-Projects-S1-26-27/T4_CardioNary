@@ -9,18 +9,21 @@ Task 6: Adds the adapted model (adapt_bn) to Comparison A:
 - adapted CNN plus feature vote
 """
 import csv
+from functools import lru_cache
 import json
+import math
 from pathlib import Path
 from typing import Generator, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.metrics import log_loss
 
-from core.contracts import FusedOutput
+from core.contracts import FusedOutput, PatientMetadata
 from cardio.eval.intervals import metric_intervals
+from cardio.eval.metrics import classification_metrics
 from cardio.eval.real_world import adapt_bn
 from cardio.fusion.calibrate import calibrate_probabilities
-from cardio.fusion.votes import new_vote
+from cardio.fusion.votes import AGE_MAP, new_vote, run_feature_vote, run_metadata_vote
 from cardio.model.final_model import CLASSES, FinalModel
 
 
@@ -266,11 +269,12 @@ def run_late_fusion():
     metrics_B_2vote = metric_intervals(y_phys, p_oof_2vote, groups_phys, ["auroc"])
     metrics_B_3vote = metric_intervals(y_phys, p_oof_3vote, groups_phys, ["auroc"])
     gain_B = float(metrics_B_3vote["auroc"]["estimate"] - metrics_B_2vote["auroc"]["estimate"])
+    gain_interval = paired_gain_bootstrap(y_phys, p_oof_2vote, p_oof_3vote, groups_phys)
 
     print("\n=== Comparison B: Metadata Gain ===")
     print(f"CNN + Feature Vote AUROC: {metrics_B_2vote['auroc']['estimate']:.4f} [{metrics_B_2vote['auroc']['lower_95']:.4f}, {metrics_B_2vote['auroc']['upper_95']:.4f}]")
     print(f"CNN + Feature + Metadata Vote AUROC: {metrics_B_3vote['auroc']['estimate']:.4f} [{metrics_B_3vote['auroc']['lower_95']:.4f}, {metrics_B_3vote['auroc']['upper_95']:.4f}]")
-    print(f"Metadata AUROC Gain: {gain_B:+.4f} (Target >= +0.02)")
+    print(f"Metadata AUROC Gain: {gain_B:+.4f} [{gain_interval['lower_95']:+.4f}, {gain_interval['upper_95']:+.4f}] (Target >= +0.02)")
 
     # Contract verification: ensure sample produces valid FusedOutput
     sample_fused = FusedOutput(
@@ -302,16 +306,240 @@ def run_late_fusion():
             "two_vote": metrics_B_2vote,
             "three_vote": metrics_B_3vote,
             "auroc_gain": gain_B,
+            "auroc_gain_interval": gain_interval,
         },
     }
 
     out_path = reports_dir / "heart_fusion.json"
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(out_data, fh, indent=2)
-    print(f"\nSaved late fusion report to {out_path}")
     print(f"\nSaved updated late fusion report to {out_path}")
 
+    # Task 7: Save reports/heart_fusion_params.json
+    full_meta_model, meta_cols = run_metadata_vote()
+    save_fusion_params(
+        T=T,
+        yaseen_weights=list(w_yaseen),
+        physionet_weights=list(w_folds_3vote[0]),
+        feat_model=full_feat_model,
+        feat_cols=feature_cols,
+        meta_model=full_meta_model,
+        meta_cols=meta_cols,
+    )
+
     return out_data
+
+
+def paired_gain_bootstrap(y_true, p1, p2, patient_ids, n_resamples=1000, seed=0, confidence=0.95) -> dict:
+    """Bootstrap confidence interval for paired difference in AUROC (p2 - p1)."""
+    y = np.asarray(y_true, dtype=int)
+    ids = np.asarray(patient_ids)
+    groups = {}
+    for i, patient in enumerate(ids.tolist()):
+        groups.setdefault(patient, []).append(i)
+    clusters = [np.asarray(indices) for indices in groups.values()]
+    rng = np.random.default_rng(seed)
+    values = []
+    for _ in range(n_resamples):
+        indices = np.concatenate([clusters[i] for i in rng.integers(len(clusters), size=len(clusters))])
+        y_samp = y[indices]
+        if len(np.unique(y_samp)) < 2:
+            continue
+        auc1 = float(classification_metrics(y_samp, p1[indices])["auroc"])
+        auc2 = float(classification_metrics(y_samp, p2[indices])["auroc"])
+        gain = auc2 - auc1
+        if np.isfinite(gain):
+            values.append(gain)
+    alpha = (1 - confidence) / 2
+    bounds = np.quantile(values, [alpha, 1 - alpha]) if values else [np.nan, np.nan]
+    orig_gain = float(classification_metrics(y, p2)["auroc"] - classification_metrics(y, p1)["auroc"])
+    return {
+        "estimate": orig_gain,
+        "lower_95": float(bounds[0]),
+        "upper_95": float(bounds[1]),
+        "valid_resamples": len(values),
+        "resamples": n_resamples,
+    }
+
+
+def save_fusion_params(
+    T: float,
+    yaseen_weights: list[float],
+    physionet_weights: list[float],
+    feat_model,
+    feat_cols: list[str],
+    meta_model,
+    meta_cols: list[str],
+    out_path: Path = Path("reports/heart_fusion_params.json"),
+) -> dict:
+    """Task 7: Save fitted parameters as plain numbers into reports/heart_fusion_params.json."""
+    imputer_f = feat_model.named_steps["simpleimputer"]
+    scaler_f = feat_model.named_steps["standardscaler"]
+    lr_f = feat_model.named_steps["logisticregression"]
+
+    imputer_m = meta_model.named_steps["simpleimputer"]
+    scaler_m = meta_model.named_steps["standardscaler"]
+    lr_m = meta_model.named_steps["logisticregression"]
+
+    params = {
+        "T": float(T),
+        "final_T": float(T),
+        "yaseen_weights": [float(w) for w in yaseen_weights],
+        "physionet_weights": [float(w) for w in physionet_weights],
+        "feature_vote": {
+            "columns": list(feat_cols),
+            "medians": [float(x) for x in imputer_f.statistics_],
+            "scaler_mean": [float(x) for x in scaler_f.mean_],
+            "scaler_scale": [float(x) for x in scaler_f.scale_],
+            "coefficients": [float(x) for x in lr_f.coef_[0]],
+            "intercept": float(lr_f.intercept_[0]),
+        },
+        "metadata_vote": {
+            "columns": list(meta_cols),
+            "medians": [float(x) for x in imputer_m.statistics_],
+            "scaler_mean": [float(x) for x in scaler_m.mean_],
+            "scaler_scale": [float(x) for x in scaler_m.scale_],
+            "coefficients": [float(x) for x in lr_m.coef_[0]],
+            "intercept": float(lr_m.intercept_[0]),
+        },
+    }
+    out_path.write_text(json.dumps(params, indent=2), encoding="utf-8")
+    print(f"Saved fusion parameters to {out_path}")
+    return params
+
+
+@lru_cache(maxsize=1)
+def load_fusion_params() -> dict:
+    """Load fitted numbers from reports/heart_fusion_params.json."""
+    params_path = Path("reports/heart_fusion_params.json")
+    if not params_path.exists():
+        raise FileNotFoundError(f"Missing {params_path}. Run cardio.fusion.late_fusion to generate it.")
+    return json.loads(params_path.read_text(encoding="utf-8"))
+
+
+def _predict_vote(x_dict: dict, vote_params: dict) -> float:
+    """Compute logistic regression probability from a feature dictionary using fitted parameters."""
+    cols = vote_params["columns"]
+    medians = vote_params["medians"]
+    means = vote_params["scaler_mean"]
+    scales = vote_params["scaler_scale"]
+    coefs = vote_params["coefficients"]
+    intercept = vote_params["intercept"]
+
+    z = float(intercept)
+    for i, col in enumerate(cols):
+        val = x_dict.get(col)
+        if val is None or not (isinstance(val, (int, float)) and math.isfinite(val)):
+            val = medians[i]
+        scaled = (float(val) - means[i]) / scales[i]
+        z += coefs[i] * scaled
+    p = 1.0 / (1.0 + math.exp(-max(min(z, 500.0), -500.0)))
+    return float(max(min(p, 1.0), 0.0))
+
+
+def heart_fusion(
+    p_cnn: float,
+    features: Optional[dict] = None,
+    metadata: Optional[PatientMetadata | dict] = None,
+) -> FusedOutput:
+    """Task 7: Combines CNN probability, feature vote, and metadata vote into FusedOutput.
+
+    Uses fitted numbers saved in reports/heart_fusion_params.json.
+    Missing votes are omitted and remaining weights are normalised to sum to 1.
+    """
+    params = load_fusion_params()
+    votes: dict[str, float] = {"cnn": float(max(min(p_cnn, 1.0), 0.0))}
+
+    # 1. Feature vote
+    if features is not None and isinstance(features, dict) and len(features) > 0:
+        feat_keys = set(params["feature_vote"]["columns"])
+        if any(k in feat_keys and features[k] is not None for k in features):
+            p_feat = _predict_vote(features, params["feature_vote"])
+            votes["features"] = p_feat
+
+    # 2. Metadata vote
+    if metadata is not None:
+        if isinstance(metadata, dict):
+            raw_age = metadata.get("age_years", metadata.get("age"))
+            raw_sex = metadata.get("sex")
+            raw_h = metadata.get("height_cm", metadata.get("height"))
+            raw_w = metadata.get("weight_kg", metadata.get("weight"))
+            raw_p = metadata.get("pregnant", metadata.get("pregnancy"))
+        else:
+            raw_age = getattr(metadata, "age_years", None)
+            raw_sex = getattr(metadata, "sex", None)
+            raw_h = getattr(metadata, "height_cm", None)
+            raw_w = getattr(metadata, "weight_kg", None)
+            raw_p = getattr(metadata, "pregnant", None)
+
+        meta_dict = {}
+        if raw_age is not None:
+            if isinstance(raw_age, (int, float)) and math.isfinite(raw_age):
+                if raw_age < 0.08:
+                    meta_dict["age"] = 0.0
+                elif raw_age <= 1.0:
+                    meta_dict["age"] = 1.0
+                elif raw_age <= 12.0:
+                    meta_dict["age"] = 2.0
+                elif raw_age <= 18.0:
+                    meta_dict["age"] = 3.0
+                else:
+                    meta_dict["age"] = 4.0
+            else:
+                mapped = AGE_MAP.get(str(raw_age))
+                if mapped is not None:
+                    meta_dict["age"] = float(mapped)
+
+        if raw_sex is not None:
+            if raw_sex in ("female", "Female", 0, "0"):
+                meta_dict["sex"] = 0.0
+            elif raw_sex in ("male", "Male", 1, "1"):
+                meta_dict["sex"] = 1.0
+
+        if raw_h is not None and math.isfinite(float(raw_h)):
+            meta_dict["height"] = float(raw_h)
+
+        if raw_w is not None and math.isfinite(float(raw_w)):
+            meta_dict["weight"] = float(raw_w)
+
+        if raw_p is not None:
+            if raw_p is True or raw_p in (1, "True", "true"):
+                meta_dict["pregnant"] = 1.0
+            elif raw_p is False or raw_p in (0, "False", "false"):
+                meta_dict["pregnant"] = 0.0
+
+        if len(meta_dict) > 0:
+            p_meta = _predict_vote(meta_dict, params["metadata_vote"])
+            votes["metadata"] = p_meta
+
+    # 3. Choose weights and normalise
+    has_feat = "features" in votes
+    has_meta = "metadata" in votes
+
+    phys_w = params.get("physionet_weights", [0.70, 0.0, 0.30])
+    yaseen_w = params.get("yaseen_weights", [1.0, 0.0, 0.0])
+
+    if has_feat and has_meta:
+        raw_w = {"cnn": float(phys_w[0]), "features": float(phys_w[1]), "metadata": float(phys_w[2])}
+    elif has_feat and not has_meta:
+        raw_w = {"cnn": float(yaseen_w[0]), "features": float(yaseen_w[1])}
+    elif not has_feat and has_meta:
+        raw_w = {"cnn": float(phys_w[0]), "metadata": float(phys_w[2])}
+    else:
+        raw_w = {"cnn": 1.0}
+
+    total_w = sum(raw_w.values())
+    weights = {k: float(w / total_w) for k, w in raw_w.items()}
+
+    p_abnormal = float(sum(votes[k] * weights[k] for k in votes))
+    p_abnormal = float(max(min(p_abnormal, 1.0), 0.0))
+
+    return FusedOutput(
+        modality="heart",
+        p_abnormal=p_abnormal,
+        votes=votes,
+        weights=weights,
+    )
 
 
 def main():
