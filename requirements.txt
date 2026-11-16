@@ -13,8 +13,12 @@ tensorflow==2.19.1
 keras==3.12.4
 
 # Images and figures
-pillow==12.3.0
+pillow==11.3.0
 matplotlib==3.10.9
 
 # Tests
 pytest==9.1.1
+
+# Dashboard frontend
+streamlit==1.42.2
+

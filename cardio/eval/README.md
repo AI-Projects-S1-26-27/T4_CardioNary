@@ -58,3 +58,47 @@ fail explicitly. With both options, noise is applied before filtering; the
 requested SNR describes the addition before filtering.
 
 Run all project tests with `python -m pytest tests/`.
+
+## Official public-data results
+
+With the published team checkpoint, its matching normalisation report and the
+local public datasets/caches in place, regenerate Shivansh's S2-S4 deliverables:
+
+```powershell
+python -m cardio.run_all --only features_bmdhs features_physionet unseen adaptation robustness
+```
+
+This writes `reports/heart_features_bmdhs.csv`,
+`reports/heart_features_physionet.csv`, `reports/heart_unseen.json`,
+`reports/heart_tta.json`, and `reports/heart_robustness.json`. Commit these small
+public-data feature/results files. Raw WAVs and log-mel caches stay local.
+The earlier `*_reference.json` files remain historical experiment records;
+use the official files for the final report. Missing official outputs, model
+hash mismatches, incomplete sweeps and inconsistent draw totals fail
+`tests/test_cardio_result_files.py`.
+
+S2 uses all eligible unseen patients. S3 uses a fixed quarter as a test panel,
+with the rest supplying adaptation recordings. Their scores are therefore not
+interchangeable. Within S3 and S4, plain and adapted models score the same panel,
+and adaptation patients never enter that panel. Intervals describe resampled
+scoring patients (clips for Yaseen), conditional on the five fixed adaptation
+draws; they do not cover retraining or every possible adaptation batch.
+
+## S4 heart robustness
+
+Run the Yaseen fold-0 comparison with the confirmed team float model and its
+matching normalisation report.
+
+```powershell
+python -m cardio.eval.run_robustness --model-dir 'C:/path/to/models' --report-dir 'C:/path/to/reports' --team-model
+```
+
+The runner writes `reports/heart_robustness.json`. It measures five-class clip
+accuracy at all five white-noise SNRs, all five pink-noise SNRs, and all five
+low-pass cutoffs. A fixed quarter of usable fold-0 clips is scored for every
+condition. Five batches of 32 recordings are drawn from the remaining clips and
+reused across conditions. The accuracy change uses the same clip resamples for
+both model variants. Yaseen provides clip IDs, which are the resampling unit.
+
+Use `--reference-model` for the provisional checkpoint. Its default report is
+`scratch/heart_robustness_reference.json`.
