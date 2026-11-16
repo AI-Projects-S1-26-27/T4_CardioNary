@@ -14,8 +14,8 @@
         "adaptation_recordings": 64,
         "adaptation_windows": 916,
         "representative_windows": 300,
-        "seconds_to_requantise": 2.04,
-        "seconds_to_adapt_and_requantise": 1.98,
+        "seconds_to_requantise": 2.37,
+        "seconds_to_adapt_and_requantise": 2.33,
         "int8_bytes": {
           "B_requantised": 28336,
           "C_adapted_requantised": 28336
@@ -39,8 +39,8 @@
         "adaptation_recordings": 64,
         "adaptation_windows": 909,
         "representative_windows": 300,
-        "seconds_to_requantise": 1.15,
-        "seconds_to_adapt_and_requantise": 1.51,
+        "seconds_to_requantise": 1.69,
+        "seconds_to_adapt_and_requantise": 2.0,
         "int8_bytes": {
           "B_requantised": 28336,
           "C_adapted_requantised": 28336
@@ -88,7 +88,7 @@
           }
         },
         "share_of_inputs_clipped": 4.76356975464769e-05,
-        "ms_per_window": 0.082
+        "ms_per_window": 0.152
       },
       "B_requantised": {
         "recording_agreement": 0.9655390452102435,
@@ -116,7 +116,7 @@
           }
         },
         "share_of_inputs_clipped": 7.172705805861591e-07,
-        "ms_per_window": 0.075
+        "ms_per_window": 0.145
       },
       "C_adapted_requantised": {
         "recording_agreement": 0.9740752450205501,
@@ -144,11 +144,11 @@
           }
         },
         "share_of_inputs_clipped": 7.172705805861591e-07,
-        "ms_per_window": 0.082
+        "ms_per_window": 0.153
       }
     },
     "target": "agreement >= 98% with the full-precision model (proposal 4.7, edge budget)",
-    "run_on": "2026-11-02"
+    "run_on": "2026-11-16"
   },
   "clinic": {
     "measured_recordings": 50,
@@ -160,8 +160,8 @@
         "adaptation_recordings": 25,
         "adaptation_windows": 75,
         "representative_windows": 75,
-        "seconds_to_requantise": 1.18,
-        "seconds_to_adapt_and_requantise": 1.19,
+        "seconds_to_requantise": 1.73,
+        "seconds_to_adapt_and_requantise": 1.72,
         "int8_bytes": {
           "B_requantised": 28336,
           "C_adapted_requantised": 28336
@@ -185,8 +185,8 @@
         "adaptation_recordings": 25,
         "adaptation_windows": 75,
         "representative_windows": 75,
-        "seconds_to_requantise": 0.89,
-        "seconds_to_adapt_and_requantise": 1.04,
+        "seconds_to_requantise": 1.31,
+        "seconds_to_adapt_and_requantise": 1.44,
         "int8_bytes": {
           "B_requantised": 28336,
           "C_adapted_requantised": 28336
@@ -234,7 +234,7 @@
           }
         },
         "share_of_inputs_clipped": 9.201388888888889e-05,
-        "ms_per_window": 0.115
+        "ms_per_window": 0.157
       },
       "B_requantised": {
         "recording_agreement": 0.96,
@@ -262,7 +262,7 @@
           }
         },
         "share_of_inputs_clipped": 0.0,
-        "ms_per_window": 0.083
+        "ms_per_window": 0.123
       },
       "C_adapted_requantised": {
         "recording_agreement": 0.96,
@@ -290,11 +290,11 @@
           }
         },
         "share_of_inputs_clipped": 0.0,
-        "ms_per_window": 0.111
+        "ms_per_window": 0.167
       }
     },
     "target": "agreement >= 98% with the full-precision model (proposal 4.7, edge budget)",
-    "run_on": "2026-11-02",
+    "run_on": "2026-11-16",
     "data_rules": "aggregates only; re-quantised models existed in memory only"
   }
 }
