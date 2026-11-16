@@ -49,6 +49,15 @@ def test_only_and_from_pick_steps_in_order():
         run_all.plan(only=["no_such_step"])
 
 
+def test_bmdhs_characteristics_can_be_regenerated_before_fusion():
+    steps = list(run_all.STEPS)
+    features = next(step for step in steps if step.name == "features_bmdhs")
+    assert features.module == "cardio.model.features"
+    assert features.args == ("--dataset", "bmdhs")
+    assert features.writes == ("reports/heart_features_bmdhs.csv",)
+    assert steps.index(features) < next(i for i, step in enumerate(steps) if step.name == "late_fusion")
+
+
 def test_final_refuses_to_start_when_code_is_missing(monkeypatch, capsys):
     fake = run_all.Step("future_step", "cardio.no_such_module", writes=("reports/future.json",), model=False)
     monkeypatch.setattr(run_all, "STEPS", (fake,))
