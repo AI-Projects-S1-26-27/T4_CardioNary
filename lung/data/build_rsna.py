@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pydicom
 from PIL import Image
 from sklearn.model_selection import StratifiedKFold
 
@@ -72,15 +71,27 @@ def _metadata_from_dataset(ds) -> dict:
     }
 
 
+def _dcmread(dicom_path: Path, **kwargs):
+    """Import the optional RSNA dependency only when DICOM data is read."""
+    try:
+        import pydicom
+    except ImportError as exc:
+        raise RuntimeError(
+            "Building the RSNA manifest requires pydicom; install "
+            "lung/requirements-lung.txt first."
+        ) from exc
+    return pydicom.dcmread(dicom_path, **kwargs)
+
+
 def read_dicom_metadata(dicom_path: Path) -> dict:
     """Read manifest metadata without decoding the DICOM pixel data."""
-    ds = pydicom.dcmread(dicom_path, stop_before_pixels=True)
+    ds = _dcmread(dicom_path, stop_before_pixels=True)
     return _metadata_from_dataset(ds)
 
 
 def dicom_to_png(dicom_path: Path, png_path: Path) -> dict:
     """Read DICOM pixels and metadata, then save a square 256x256 PNG."""
-    ds = pydicom.dcmread(dicom_path)
+    ds = _dcmread(dicom_path)
 
     pixels = ds.pixel_array.astype(np.float32)
 

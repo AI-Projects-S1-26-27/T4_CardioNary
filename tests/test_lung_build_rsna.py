@@ -40,7 +40,7 @@ def test_read_dicom_metadata_reads_header_without_pixels(monkeypatch, tmp_path):
         observed.update(kwargs)
         return Dataset()
 
-    monkeypatch.setattr(build_rsna.pydicom, "dcmread", fake_dcmread)
+    monkeypatch.setattr(build_rsna, "_dcmread", fake_dcmread)
     result = build_rsna.read_dicom_metadata(tmp_path / "case.dcm")
 
     assert result == {"age": 57.0, "sex": "F", "view_position": "AP"}
