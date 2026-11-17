@@ -30,44 +30,44 @@
       "median_seconds_of_audio": 2.517875,
       "median_windows": 1.0,
       "load_and_resample_ms": {
-        "median": 0.52,
-        "p95": 2.58,
-        "max": 3.19
+        "median": 0.36,
+        "p95": 0.58,
+        "max": 1.1
       },
       "quality_check_ms": {
-        "median": 3.27,
-        "p95": 7.18,
-        "max": 9.92
+        "median": 2.71,
+        "p95": 6.02,
+        "max": 8.21
       },
       "front_end_ms": {
-        "median": 1.94,
-        "p95": 3.17,
-        "max": 3.77
+        "median": 1.48,
+        "p95": 2.69,
+        "max": 7.11
       },
       "cnn_8bit_ms": {
-        "median": 0.99,
-        "p95": 1.54,
-        "max": 1.99
+        "median": 0.8,
+        "p95": 1.38,
+        "max": 2.02
       },
       "secondary_characteristics_ms": {
-        "median": 9.53,
-        "p95": 14.3,
-        "max": 17.33
+        "median": 7.06,
+        "p95": 13.21,
+        "max": 14.84
       },
       "systole_or_diastole_ms": {
         "median": 0.0,
-        "p95": 0.01,
-        "max": 0.01
+        "p95": 0.0,
+        "max": 0.02
       },
       "votes_and_fusion_ms": {
-        "median": 0.3,
-        "p95": 0.48,
-        "max": 0.63
+        "median": 0.26,
+        "p95": 0.43,
+        "max": 0.61
       },
       "total_ms": {
-        "median": 16.72,
-        "p95": 24.75,
-        "max": 27.49
+        "median": 12.88,
+        "p95": 23.68,
+        "max": 28.41
       }
     },
     "physionet_2022_sample": {
@@ -76,29 +76,29 @@
       "median_seconds_of_audio": 22.184,
       "median_windows": 14.0,
       "load_and_resample_ms": {
-        "median": 5.35,
-        "p95": 12.44,
-        "max": 15.48
+        "median": 5.39,
+        "p95": 8.9,
+        "max": 11.35
       },
       "quality_check_ms": {
-        "median": 17.71,
-        "p95": 93.88,
-        "max": 113.87
+        "median": 20.9,
+        "p95": 85.04,
+        "max": 114.16
       },
       "front_end_ms": {
-        "median": 16.76,
-        "p95": 31.95,
-        "max": 37.0
+        "median": 16.79,
+        "p95": 28.95,
+        "max": 44.16
       },
       "cnn_8bit_ms": {
-        "median": 2.43,
-        "p95": 4.33,
-        "max": 5.59
+        "median": 2.02,
+        "p95": 3.51,
+        "max": 5.91
       },
       "secondary_characteristics_ms": {
-        "median": 50.33,
-        "p95": 80.44,
-        "max": 94.84
+        "median": 51.81,
+        "p95": 87.77,
+        "max": 95.02
       },
       "systole_or_diastole_ms": {
         "median": 0.0,
@@ -106,18 +106,18 @@
         "max": 0.01
       },
       "votes_and_fusion_ms": {
-        "median": 0.23,
-        "p95": 0.36,
-        "max": 0.48
+        "median": 0.26,
+        "p95": 0.46,
+        "max": 0.64
       },
       "total_ms": {
-        "median": 97.28,
-        "p95": 202.33,
-        "max": 251.58
+        "median": 101.36,
+        "p95": 190.77,
+        "max": 237.39
       }
     }
   },
-  "votes_and_fusion": "CNN vote alone with weight 1: heart_fusion and reports/heart_fusion_params.json are not in this branch yet. Run this again once they are.",
+  "votes_and_fusion": "heart_fusion from cardio/fusion/late_fusion.py",
   "temperature": 0.5044402460291634,
   "quality_check_on_public_data": {
     "yaseen": {
@@ -186,12 +186,12 @@
       "C_adapted_requantised": 1.0
     },
     "clinic_ms_per_window": {
-      "A_original": 0.115,
-      "B_requantised": 0.083,
-      "C_adapted_requantised": 0.111
+      "A_original": 0.157,
+      "B_requantised": 0.123,
+      "C_adapted_requantised": 0.167
     }
   },
-  "peak_memory_mb_whole_process": 485.3046875,
+  "peak_memory_mb_whole_process": 490.890625,
   "targets": {
     "int8_under_1_MB": true,
     "case_under_1_s_at_p95": true,
