@@ -1,0 +1,111 @@
+{
+  "T": 0.9441746943038064,
+  "weights": {
+    "cnn": 0.85,
+    "features": 0.0,
+    "metadata": 0.15
+  },
+  "weights_source": "app_weights of reports/xray_fusion.json (chosen on RSNA out-of-fold votes)",
+  "feature_vote": {
+    "columns": [
+      "dense_area_pct",
+      "asymmetry_index",
+      "zone_upper_pct",
+      "zone_middle_pct",
+      "zone_lower_pct",
+      "largest_region_fraction",
+      "regions_detected",
+      "mean_intensity",
+      "texture_heterogeneity",
+      "clahe_mean",
+      "clahe_std",
+      "clahe_abs_laplacian"
+    ],
+    "fill": [
+      13.5,
+      0.227,
+      13.4,
+      20.7,
+      57.5,
+      0.503,
+      13.0,
+      144.45,
+      35.0,
+      161.04671934043284,
+      45.71375646626948,
+      18.98608684539795
+    ],
+    "scaler_mean": [
+      17.27149931693989,
+      0.3121905737704918,
+      15.98140368852459,
+      19.90959699453552,
+      56.510416666666664,
+      0.4856087773224044,
+      13.951673497267759,
+      143.6891393442623,
+      34.64352800546448,
+      161.25645135138433,
+      44.69261436639255,
+      19.59448306685914
+    ],
+    "scaler_scale": [
+      15.906615249040584,
+      0.28802193633955303,
+      16.55444520015243,
+      13.536519244358468,
+      25.44621881561544,
+      0.21716165140195742,
+      9.325633444399239,
+      19.93688602555283,
+      7.962755630996709,
+      17.795168043420652,
+      7.86502055711602,
+      5.432689632443596
+    ],
+    "coef": [
+      -0.012675964439021107,
+      0.46040393931793044,
+      -0.5372179745338255,
+      0.543190446107539,
+      -0.6725970036318005,
+      0.19177100231078836,
+      -0.42832447031441734,
+      -2.40348231337593,
+      0.9673189781870802,
+      2.9152583879838634,
+      -1.154693011324301,
+      -1.6598013764186965
+    ],
+    "intercept": 1.5330419114479583,
+    "fitted_on": "5856 Kermany images, all 5 folds"
+  },
+  "metadata_vote": {
+    "columns": [
+      "age_100",
+      "age_100_sq",
+      "sex_male"
+    ],
+    "age_fill_years": 47.0,
+    "sex_unknown": 0.5,
+    "scaler_mean": [
+      0.4517678331090169,
+      0.23222246971736452,
+      0.5689098250336474
+    ],
+    "scaler_scale": [
+      0.16771492087868997,
+      0.149308791817792,
+      0.49522867042792384
+    ],
+    "coef": [
+      -0.5257264397078112,
+      0.5797675595165945,
+      0.04726615210250416
+    ],
+    "intercept": -0.0016200984089686837,
+    "age_observed_rows": 14860,
+    "fitted_on": "14860 RSNA patients, all 5 folds"
+  },
+  "notes": "p_cnn given to xray_fusion is the calibrated pneumonia probability. The metadata vote never uses view position. Everything here is a plain number; nothing is fitted in the app."
+}

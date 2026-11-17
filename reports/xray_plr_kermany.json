@@ -13,51 +13,51 @@
     "regions_detected",
     "mean_intensity",
     "texture_heterogeneity",
-    "clahe_std_1",
-    "clahe_std_2",
-    "clahe_std_4"
+    "clahe_mean",
+    "clahe_std",
+    "clahe_abs_laplacian"
   ],
   "n_samples": 5856,
   "n_patients": 2790,
-  "image_level_auroc": 0.9278973187945463,
-  "patient_level_auroc": 0.9397966153226878,
-  "fold_auroc_mean": 0.9284045828006884,
-  "fold_auroc_std": 0.007271571292989727,
+  "image_level_auroc": 0.9485291519610937,
+  "patient_level_auroc": 0.9598835018392193,
+  "fold_auroc_mean": 0.9487705137557725,
+  "fold_auroc_std": 0.006380001301705273,
   "per_fold": [
     {
       "fold": 0,
       "n_test": 1239,
-      "auroc": 0.9229339539904204,
-      "accuracy": 0.8652138821630347,
-      "macro_f1": 0.8209576304551924
+      "auroc": 0.9427713688187277,
+      "accuracy": 0.87409200968523,
+      "macro_f1": 0.849947830623424
     },
     {
       "fold": 1,
       "n_test": 1181,
-      "auroc": 0.9353432755206145,
-      "accuracy": 0.8873835732430144,
-      "macro_f1": 0.851912504937884
+      "auroc": 0.9485199243833643,
+      "accuracy": 0.8856900931414056,
+      "macro_f1": 0.8628441799426549
     },
     {
       "fold": 2,
       "n_test": 1079,
-      "auroc": 0.9384122226385245,
-      "accuracy": 0.8795180722891566,
-      "macro_f1": 0.8483764268419232
+      "auroc": 0.9604845759960035,
+      "accuracy": 0.8943466172381835,
+      "macro_f1": 0.8792970129921105
     },
     {
       "fold": 3,
       "n_test": 1213,
-      "auroc": 0.9194802935958534,
-      "accuracy": 0.8656224237427865,
-      "macro_f1": 0.8268498011635066
+      "auroc": 0.9432706021497896,
+      "accuracy": 0.8788128606760099,
+      "macro_f1": 0.8554108131119624
     },
     {
       "fold": 4,
       "n_test": 1144,
-      "auroc": 0.9258531682580292,
-      "accuracy": 0.8732517482517482,
-      "macro_f1": 0.8374310419682329
+      "auroc": 0.9488060974309773,
+      "accuracy": 0.8636363636363636,
+      "macro_f1": 0.8416833738445434
     }
   ]
 }

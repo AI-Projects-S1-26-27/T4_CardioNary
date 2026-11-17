@@ -6,13 +6,13 @@
     "file_size_kb": 5328.251953125,
     "file_size_mb": 5.203371047973633,
     "num_inferences": 100,
-    "total_time_s": 7.733340250008041,
-    "mean_time_ms": 77.33340250008041,
-    "mean_time_s": 0.07733340250008042,
-    "throughput_fps": 12.931022917282867,
-    "peak_memory_bytes": 291721,
-    "peak_memory_kb": 284.8837890625,
-    "peak_memory_mb": 0.27820682525634766
+    "total_time_s": 45.69323539999823,
+    "mean_time_ms": 456.9323539999823,
+    "mean_time_s": 0.4569323539999823,
+    "throughput_fps": 2.1885077544761447,
+    "peak_memory_bytes": 288399,
+    "peak_memory_kb": 281.6396484375,
+    "peak_memory_mb": 0.2750387191772461
   },
   "int8": {
     "model": "chiron_pulmo_v1_int8.tflite",
@@ -21,16 +21,16 @@
     "file_size_kb": 610.4296875,
     "file_size_mb": 0.5961227416992188,
     "num_inferences": 100,
-    "total_time_s": 0.019198708003386855,
-    "mean_time_ms": 0.19198708003386855,
-    "mean_time_s": 0.00019198708003386855,
-    "throughput_fps": 5208.6838334308195,
-    "peak_memory_bytes": 368,
-    "peak_memory_kb": 0.359375,
-    "peak_memory_mb": 0.0003509521484375
+    "total_time_s": 0.0435113999992609,
+    "mean_time_ms": 0.435113999992609,
+    "mean_time_s": 0.000435113999992609,
+    "throughput_fps": 2298.248275203708,
+    "peak_memory_bytes": 352,
+    "peak_memory_kb": 0.34375,
+    "peak_memory_mb": 0.000335693359375
   },
   "size_reduction_ratio": 8.72869072758687,
-  "speedup_ratio": 402.80524338636735,
+  "speedup_ratio": 1050.1439944652295,
   "meets_edge_budget": {
     "size_under_1mb": true,
     "time_under_1s": true

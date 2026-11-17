@@ -26,9 +26,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-from lung.eval.common import REPORT_DIR, choose_weights, fuse, meta_matrix, paired_auroc
+from lung.eval.common import REPORT_DIR, choose_weights, fuse, paired_auroc
 from lung.eval.metrics import expected_calibration_error, sensitivity_at_specificity
 from lung.fusion.calibrate import apply_temperature, fit_temperature
+from lung.fusion.meta_vote import oof_metadata_vote
 from lung.fusion.votes import FEATURE_COLUMNS
 
 HINTS = {
@@ -50,7 +51,7 @@ def read(name: str, **kw) -> pd.DataFrame:
 
 
 def lr() -> LogisticRegression:
-    return LogisticRegression(C=1.0, max_iter=1000, random_state=42)
+    return LogisticRegression(C=1.0, class_weight="balanced", max_iter=1000, random_state=42)
 
 
 def summary(y, p) -> dict:
@@ -117,28 +118,36 @@ def main() -> int:
                          "from the same cache")
 
     y, fold = rs.label.to_numpy(int), rs.fold.to_numpy(int)
-    p_cnn = rs.p_float.to_numpy(float)
-    yk, pk = oof.label.to_numpy(int), oof.p_pneumonia.to_numpy(float)
-
-    # Check for adapted model predictions
-    p_adapted = None
-    if "p_adapted" in rs.columns:
-        p_adapted = rs["p_adapted"].to_numpy(float)
-    elif (REPORT_DIR / "xray_cnn_adapted_rsna.csv").exists():
-        adapt_df = read("xray_cnn_adapted_rsna.csv", dtype={"patient_id": str})
-        m_adapt = rs[["patient_id"]].merge(adapt_df[["patient_id", "p_adapted"]], on="patient_id", how="left")
-        if "p_adapted" in m_adapt.columns and m_adapt["p_adapted"].notna().all():
-            p_adapted = m_adapt["p_adapted"].to_numpy(float)
+    yk, pk_raw = oof.label.to_numpy(int), oof.p_pneumonia.to_numpy(float)
 
     # ---- calibration of the CNN (Kermany out-of-fold) --------------------
-    T = fit_temperature(pk, yk)
+    # Every vote below uses the CALIBRATED CNN probability, as lung.predict / xray_fusion do.
+    T = fit_temperature(pk_raw, yk)
     calibration = {
         "temperature": float(T),
         "fitted_on": "Kermany out-of-fold CNN probabilities, all 5 folds",
-        "ece_before": expected_calibration_error(yk, pk, n_bins=15),
-        "ece_after": expected_calibration_error(yk, apply_temperature(pk, T), n_bins=15),
+        "ece_before": expected_calibration_error(yk, pk_raw, n_bins=15),
+        "ece_after": expected_calibration_error(yk, apply_temperature(pk_raw, T), n_bins=15),
         "target": "ece_after <= 0.05",
     }
+    pk = apply_temperature(pk_raw, T)
+    p_cnn_raw = rs.p_float.to_numpy(float)
+    p_cnn = apply_temperature(p_cnn_raw, T)
+    calibration["rsna_ece_before"] = expected_calibration_error(y, p_cnn_raw, n_bins=15)
+    calibration["rsna_ece_after"] = expected_calibration_error(y, p_cnn, n_bins=15)
+
+    # Adapted model predictions (lung.eval.run_adapted_rsna). The images it adapted on are never scored.
+    p_adapted, keep = None, np.ones(len(rs), dtype=bool)
+    if "p_adapted" in rs.columns:
+        p_adapted = apply_temperature(rs["p_adapted"].to_numpy(float), T)
+    elif (REPORT_DIR / "xray_cnn_adapted_rsna.csv").exists():
+        adapt_df = read("xray_cnn_adapted_rsna.csv", dtype={"patient_id": str})
+        m_adapt = rs[["patient_id"]].merge(adapt_df, on="patient_id", how="left")
+        if m_adapt["p_adapted"].notna().all():
+            p_adapted = apply_temperature(m_adapt["p_adapted"].to_numpy(float), T)
+            keep = ~m_adapt["used_for_adaptation"].fillna(False).to_numpy(bool)
+        else:
+            print("[warn] adapted file does not cover every RSNA patient; adapted model left out")
 
     # ---- feature vote trained on ALL of Kermany, applied to RSNA ---------
     sc = StandardScaler().fit(fk[FEATURE_COLUMNS])
@@ -148,27 +157,21 @@ def main() -> int:
     # ---- 1. generalisation -----------------------------------------------
     w_k = choose_weights({"cnn": pk, "features": plr.pLR.to_numpy(float)}, yk)
     generalisation = compute_generalisation_comparison(
-        y=y,
-        p_cnn=p_cnn,
-        p_feat=p_feat,
+        y=y[keep],
+        p_cnn=p_cnn[keep],
+        p_feat=p_feat[keep],
         w_k=w_k,
-        p_adapted=p_adapted,
+        p_adapted=None if p_adapted is None else p_adapted[keep],
     )
+    generalisation["n_scored"] = int(keep.sum())
+    generalisation["n_excluded_used_for_adaptation"] = int((~keep).sum())
 
     # ---- 2. metadata gain within RSNA folds ------------------------------
     folds = sorted(set(fold.tolist()))
-    p_meta = np.zeros(len(y))
     rsna_age = pd.to_numeric(rs["age"], errors="coerce")
     age_observed_rows = int(rsna_age.notna().sum())
-    for k in folds:
-        tr, te = fold != k, fold == k
-        training_ages = rsna_age[tr].dropna()
-        # Some RSNA DICOMs do not expose PatientAge. If an entire training fold
-        # lacks age, use a constant neutral fill; the age terms then carry no
-        # signal and the metadata vote is effectively sex-only.
-        med = float(training_ages.median()) if not training_ages.empty else 0.0
-        M = meta_matrix(rs, med)
-        p_meta[te] = lr().fit(M[tr], y[tr]).predict_proba(M[te])[:, 1]
+    # Same definition as lung.fusion.meta_vote (training-fold age fill and scaler).
+    p_meta = oof_metadata_vote(rs)
 
     votes2 = {"cnn": p_cnn, "features": p_feat}
     votes3 = {**votes2, "metadata": p_meta}
@@ -181,6 +184,27 @@ def main() -> int:
         f3[te] = fuse({a: v[te] for a, v in votes3.items()}, w3)
         per_fold.append({"fold": int(k), "weights_without_metadata": w2, "weights_with_metadata": w3})
     meta = paired_auroc(y, f2, f3)
+
+    # The same two fusions with the adapted CNN (roadmap section 5: each version with and without
+    # adaptation). Weights are rechosen on the training folds; the images used to adapt are not scored.
+    adapted_versions = None
+    if p_adapted is not None:
+        a2, a3 = np.zeros(len(y)), np.zeros(len(y))
+        av2, av3 = {"cnn": p_adapted, "features": p_feat}, {"cnn": p_adapted, "features": p_feat, "metadata": p_meta}
+        for k in folds:
+            tr, te = fold != k, fold == k
+            a2[te] = fuse({a: v[te] for a, v in av2.items()},
+                          choose_weights({a: v[tr] for a, v in av2.items()}, y[tr]))
+            a3[te] = fuse({a: v[te] for a, v in av3.items()},
+                          choose_weights({a: v[tr] for a, v in av3.items()}, y[tr]))
+        adapted_versions = {
+            "scored": f"{int(keep.sum())} patients (the {int((~keep).sum())} used to adapt are left out)",
+            "adapted_cnn_plus_features": summary(y[keep], a2[keep]),
+            "adapted_cnn_plus_features_plus_metadata": summary(y[keep], a3[keep]),
+            "metadata_gain_with_adapted_cnn": paired_auroc(y[keep], a2[keep], a3[keep]),
+            "plain_cnn_vs_full_branch_with_metadata": paired_auroc(y[keep], p_cnn[keep], a3[keep]),
+            "plain_cnn_plus_features_plus_metadata_vs_adapted": paired_auroc(y[keep], f3[keep], a3[keep]),
+        }
     metadata_gain = {
         "weights_chosen_on": "the other four RSNA folds, rechosen for each fold",
         "age_observed_rows": age_observed_rows,
@@ -198,6 +222,7 @@ def main() -> int:
         "target": "AUROC gain >= +0.02 with w3 <= 0.3",
         "gain": meta["difference_b_minus_a"]["estimate"],
         "meets_target": bool(meta["difference_b_minus_a"]["estimate"] >= 0.02),
+        "with_adapted_cnn": adapted_versions,
         "note": "metadata vote is trained on adults (RSNA) while the CNN is trained on children (Kermany); "
                 "view position is never an input",
     }
@@ -221,6 +246,10 @@ def main() -> int:
               f"(gain {g['full_cardionary_gain']:+.4f})")
     print(f"2. metadata gain:  {m['without_metadata']['auroc']:.4f} -> {m['with_metadata']['auroc']:.4f}  "
           f"gain {m['gain']:+.4f} {meta['difference_b_minus_a']['ci95']}  mean w3 {m['mean_metadata_weight']:.2f}")
+    if adapted_versions:
+        av = adapted_versions
+        print(f"   adapted CNN + features + metadata: {av['adapted_cnn_plus_features_plus_metadata']['auroc']:.4f}; "
+              f"metadata gain with adapted CNN {av['metadata_gain_with_adapted_cnn']['difference_b_minus_a']['estimate']:+.4f}")
     print("wrote reports/xray_fusion.json")
     return 0
 

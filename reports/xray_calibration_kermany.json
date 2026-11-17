@@ -9,15 +9,19 @@
     "temperature_T": 0.9442,
     "nll_before": 0.1191,
     "nll_after": 0.1186,
-    "ece_before_pct": 1.16,
-    "ece_after_pct": 0.62
+    "ece_before_pct": 2.69,
+    "ece_after_pct": 2.47,
+    "ece_bins": 15,
+    "ece_target_pct": 5.0,
+    "meets_target": true,
+    "fitted_on": "Kermany out-of-fold CNN probabilities, all 5 folds"
   },
   "kermany_plr": {
     "n_samples": 5856,
-    "temperature_T": 1.0045,
-    "nll_before": 0.3025,
-    "nll_after": 0.3025,
-    "ece_before_pct": 0.91,
-    "ece_after_pct": 0.83
+    "temperature_T": 1.0884,
+    "nll_before": 0.295,
+    "nll_after": 0.2939,
+    "ece_before_pct": 7.83,
+    "ece_after_pct": 8.0
   }
 }

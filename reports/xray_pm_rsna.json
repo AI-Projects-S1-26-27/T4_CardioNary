@@ -1,6 +1,9 @@
 {
-  "n_images": 14863,
-  "n_patients": 14863,
-  "auroc_image_level": 0.5069,
-  "auroc_patient_level": 0.5069
+  "n_images": 14860,
+  "n_patients": 14860,
+  "auroc_image_level": 0.5367,
+  "auroc_patient_level": 0.5367,
+  "age_observed_rows": 14860,
+  "inputs": "age/100, (age/100)^2, sex",
+  "view_position_used": false
 }

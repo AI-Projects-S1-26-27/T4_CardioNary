@@ -20,8 +20,11 @@ from core.images import features_for_image
 
 ROOT = Path(__file__).resolve().parents[2]
 RSNA_DIR = ROOT / "data" / "raw" / "rsna"
-DICOM_DIR = RSNA_DIR / "stage_2_train_images"
-CLASS_CSV = RSNA_DIR / "stage_2_detailed_class_info.csv"
+# `kaggle competitions download` + unzip may leave the files one level down.
+KAGGLE_DIR = RSNA_DIR / "rsna-pneumonia-detection-challenge"
+SOURCE_DIR = RSNA_DIR if (RSNA_DIR / "stage_2_train_images").exists() or not KAGGLE_DIR.exists() else KAGGLE_DIR
+DICOM_DIR = SOURCE_DIR / "stage_2_train_images"
+CLASS_CSV = SOURCE_DIR / "stage_2_detailed_class_info.csv"
 
 PNG_DIR = RSNA_DIR / "png256"
 CACHE_DIR = ROOT / "data" / "cache" / "rsna_96"

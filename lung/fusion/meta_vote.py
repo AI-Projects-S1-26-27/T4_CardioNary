@@ -9,9 +9,11 @@ Features used:
     a²  = (age / 100) **2
     sex_male = 1 if sex == 'M', else 0
 
-When age is missing (NaN) the two age features are imputed with the
-training-fold mean (strict anti-leakage: imputation mean is computed on
-each fold's training split and applied to the test split).
+When age is missing the age is filled with the training-fold median (strict
+anti-leakage: the fill is computed on each fold's training split and applied to
+the test split), BEFORE a and a^2 are formed, so that a^2 stays the square of a.
+An unknown sex counts as 0.5. If no age is recorded at all, the vote is sex-only
+and the JSON says so.
 
 Output:
     reports/xray_pm_rsna.csv    -- image-level pM (out-of-fold)
@@ -33,22 +35,61 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
+from lung.eval.common import meta_matrix
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = REPO_ROOT / "data" / "manifests" / "rsna_manifest.csv"
 OUT_CSV = REPO_ROOT / "reports" / "xray_pm_rsna.csv"
 OUT_JSON = REPO_ROOT / "reports" / "xray_pm_rsna.json"
 
 
-def _build_features(df: pd.DataFrame) -> np.ndarray:
-    """Return (N, 3) feature matrix: [a, a^2, sex_male].
+META_COLUMNS = ["age_100", "age_100_sq", "sex_male"]
+SEX_UNKNOWN = 0.5
 
-    ``age`` is expected to be in years; NaN values are carried through for
-    the caller to impute per-fold.
-    """
-    a = df["age"].to_numpy(dtype=float) / 100.0
-    a2 = a ** 2
-    sex_male = (df["sex"].str.upper() == "M").astype(float).to_numpy()
-    return np.column_stack([a, a2, sex_male])
+
+def _age_fill(df: pd.DataFrame) -> float:
+    """Median of the observed ages, 0.0 if none (the age terms are then constant)."""
+    ages = pd.to_numeric(df["age"], errors="coerce").dropna()
+    return float(ages.median()) if len(ages) else 0.0
+
+
+def _lr() -> LogisticRegression:
+    return LogisticRegression(C=1.0, class_weight="balanced", solver="lbfgs", max_iter=1000,
+                              random_state=42)
+
+
+def oof_metadata_vote(df: pd.DataFrame) -> np.ndarray:
+    """Out-of-fold pM for every row of ``df`` (columns fold, label, age, sex). For fold k the
+    age fill, the scaler and the regression come from the other folds only."""
+    fold = df["fold"].to_numpy(dtype=int)
+    y = df["label"].to_numpy(dtype=int)
+    p = np.zeros(len(df))
+    for f in sorted(set(fold.tolist())):
+        tr, te = fold != f, fold == f
+        X = meta_matrix(df, _age_fill(df[tr]))
+        scaler = StandardScaler().fit(X[tr])
+        p[te] = _lr().fit(scaler.transform(X[tr]), y[tr]).predict_proba(scaler.transform(X[te]))[:, 1]
+    return p
+
+
+def fit_metadata_vote(df: pd.DataFrame) -> dict:
+    """Fit the final metadata vote on ALL rows of ``df`` and return plain numbers
+    (age fill, scaler, coefficients) for reports/xray_fusion_params.json."""
+    fill = _age_fill(df)
+    X = meta_matrix(df, fill)
+    scaler = StandardScaler().fit(X)
+    clf = _lr().fit(scaler.transform(X), df["label"].to_numpy(dtype=int))
+    return {
+        "columns": META_COLUMNS,
+        "age_fill_years": fill,
+        "sex_unknown": SEX_UNKNOWN,
+        "scaler_mean": scaler.mean_.tolist(),
+        "scaler_scale": scaler.scale_.tolist(),
+        "coef": clf.coef_[0].tolist(),
+        "intercept": float(clf.intercept_[0]),
+        "age_observed_rows": int(pd.to_numeric(df["age"], errors="coerce").notna().sum()),
+        "fitted_on": f"{len(df)} RSNA patients, all 5 folds",
+    }
 
 
 def run_meta_vote(
@@ -87,54 +128,10 @@ def run_meta_vote(
     if len(folds) != 5:
         raise ValueError(f"Expected 5 folds in RSNA manifest, found {folds}")
 
-    X_all = _build_features(df)  # (N, 3); age columns may be NaN
-    y_all = df["label"].to_numpy(dtype=int)
-
-    oof_rows = []
-
-    for f in folds:
-        tr_mask = df["fold"].to_numpy() != f
-        te_mask = df["fold"].to_numpy() == f
-
-        X_tr, X_te = X_all[tr_mask].copy(), X_all[te_mask].copy()
-        y_tr = y_all[tr_mask]
-
-        # --- Impute NaN age features using training-fold mean (anti-leakage) ---
-        for col_idx in (0, 1):  # a and a^2 columns
-            col_tr = X_tr[:, col_idx]
-            nan_mask_tr = np.isnan(col_tr)
-            if nan_mask_tr.all():
-                # All NaN -> zero-fill (feature carries no information)
-                X_tr[:, col_idx] = 0.0
-                X_te[:, col_idx] = 0.0
-            else:
-                col_mean = col_tr[~nan_mask_tr].mean()
-                X_tr[nan_mask_tr, col_idx] = col_mean
-                X_te[np.isnan(X_te[:, col_idx]), col_idx] = col_mean
-
-        # --- Standardise on training fold only (anti-leakage) ---
-        scaler = StandardScaler()
-        X_tr_s = scaler.fit_transform(X_tr)
-        X_te_s = scaler.transform(X_te)
-
-        lr = LogisticRegression(
-            max_iter=1000,
-            solver="lbfgs",
-            C=1.0,
-            random_state=42,
-        )
-        lr.fit(X_tr_s, y_tr)
-        p_te = lr.predict_proba(X_te_s)[:, 1]  # P(abnormal)
-
-        te_indices = np.where(te_mask)[0]
-        for idx, row_i, pm in zip(te_indices, df[te_mask].itertuples(), p_te):
-            oof_rows.append({
-                "index": int(idx),
-                "patient_id": str(row_i.patient_id),
-                "fold": int(f),
-                "label": int(row_i.label),
-                "pM": float(pm),
-            })
+    p_oof = oof_metadata_vote(df)
+    oof_rows = [{"index": int(i), "patient_id": str(r.patient_id), "fold": int(r.fold),
+                 "label": int(r.label), "pM": float(p_oof[i])}
+                for i, r in enumerate(df.itertuples())]
 
     df_oof = pd.DataFrame(oof_rows).sort_values("index").reset_index(drop=True)
 
@@ -157,6 +154,10 @@ def run_meta_vote(
         "n_patients": int(len(patient_grp)),
         "auroc_image_level": round(auroc_image, 4),
         "auroc_patient_level": round(auroc_patient, 4),
+        "age_observed_rows": int(pd.to_numeric(df["age"], errors="coerce").notna().sum()),
+        "inputs": ("age/100, (age/100)^2, sex" if pd.to_numeric(df["age"], errors="coerce").notna().any()
+                   else "sex only: the manifest has no ages"),
+        "view_position_used": False,
     }
     out_json.write_text(json.dumps(summary, indent=2))
 
