@@ -105,6 +105,7 @@ I18N = {
         "reason_too_short": "Audio clip is too short (minimum 1.5 s required)",
         "reason_unreadable": "Audio file format cannot be decoded",
         "reason_quality_check": "Excess high-frequency acoustic noise detected (>1 kHz threshold)",
+        "no_usable_test": "No visit decision: no test gave a usable result. See the reason below, then record or capture again.",
         "fusion_breakdown": "Late Fusion Vote Composition",
         "vote_cnn": "CNN Deep Learning Vote",
         "vote_features": "Secondary Features Vote",
@@ -175,6 +176,7 @@ I18N = {
         "reason_too_short": "ऑडियो क्लिप बहुत छोटी है (न्यूनतम 1.5 सेकंड आवश्यक)",
         "reason_unreadable": "ऑडियो फ़ाइल डिकोड नहीं की जा सकी",
         "reason_quality_check": "उच्च आवृत्ति का अत्यधिक शोर पाया गया (>1 kHz)",
+        "no_usable_test": "कोई निर्णय नहीं: किसी भी जांच से उपयोगी परिणाम नहीं मिला। नीचे कारण देखें, फिर दोबारा रिकॉर्ड करें।",
         "fusion_breakdown": "लेट फ्यूजन वोट वितरण",
         "vote_cnn": "CNN डीप लर्निंग वोट",
         "vote_features": "ध्वनिक लक्षण (Features) वोट",
@@ -475,31 +477,32 @@ def main():
                 except Exception as exc:
                     st.warning(f"X-ray analysis note: {exc}")
 
-            # 3. Compute Joint Visit Decision
-            if p_heart is not None and p_xray is not None:
-                p_any = float(1.0 - (1.0 - p_heart) * (1.0 - p_xray))
-            elif p_heart is not None:
-                p_any = float(p_heart)
-            elif p_xray is not None:
-                p_any = float(p_xray)
-            else:
-                p_any = 0.0
-
-            refer_decision = bool(p_any >= threshold)
-            decision = VisitDecision(
-                refer=refer_decision,
-                p_any=p_any,
-                cost_ratio=float(cost_ratio),
-                p_heart=p_heart,
-                p_xray=p_xray,
-            )
+            # 3. Compute Joint Visit Decision. A VisitDecision needs at least one
+            # usable test; a withheld heart result with no X-ray gives none.
+            decision = None
+            if p_heart is not None or p_xray is not None:
+                if p_heart is not None and p_xray is not None:
+                    p_any = float(1.0 - (1.0 - p_heart) * (1.0 - p_xray))
+                elif p_heart is not None:
+                    p_any = float(p_heart)
+                else:
+                    p_any = float(p_xray)
+                decision = VisitDecision(
+                    refer=bool(p_any >= threshold),
+                    p_any=p_any,
+                    cost_ratio=float(cost_ratio),
+                    p_heart=p_heart,
+                    p_xray=p_xray,
+                )
 
         # -------------------------------------------------------------------
         # Presentation of Results: Unified Decision Card
         # -------------------------------------------------------------------
         st.markdown(f"### {t['findings_header']}")
 
-        if decision.refer:
+        if decision is None:
+            st.info(t["no_usable_test"])
+        elif decision.refer:
             msg = t["decision_refer_desc"].format(p_any=decision.p_any, tau=threshold, cost_ratio=cost_ratio)
             st.markdown(f"""
             <div class="refer-box-caution">
@@ -617,12 +620,12 @@ def main():
         st.divider()
         summary_payload = {
             "patient_id": anon_id,
-            "refer": decision.refer,
-            "p_any": decision.p_any,
+            "refer": decision.refer if decision else None,
+            "p_any": decision.p_any if decision else None,
             "threshold": threshold,
-            "cost_ratio": decision.cost_ratio,
-            "p_heart": decision.p_heart,
-            "p_xray": decision.p_xray,
+            "cost_ratio": float(cost_ratio),
+            "p_heart": p_heart,
+            "p_xray": p_xray,
             "demographics": {
                 "age_years": patient_meta.age_years,
                 "sex": patient_meta.sex,
