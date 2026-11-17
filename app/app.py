@@ -111,10 +111,13 @@ I18N = {
         "vote_metadata": "Patient Demographics Vote",
         "weight_label": "weight",
         "texture_biomarkers": "Radiological Texture Biomarkers",
+        "characteristics_header": "Image Characteristics",
+        "fusion_fallback": "Fitted image-feature and patient-metadata vote parameters are not available; this result uses the calibrated CNN vote only.",
         "dense_area": "Dense Parenchymal Area",
         "asymmetry": "Hemithorax Asymmetry Index",
         "heterogeneity": "Texture Heterogeneity",
         "clahe_label": "Contrast-Enhanced (CLAHE) View",
+        "occlusion_label": "3 × 3 Occlusion Map (probability drop)",
         "original_img_label": "Original Film",
         "export_btn": "Export Clinical Triage Summary (JSON)",
         "reset_btn": "Start Next Patient (Clear Form)",
@@ -181,10 +184,13 @@ I18N = {
         "vote_metadata": "रोगी जनसांख्यिकी वोट",
         "weight_label": "भार (Weight)",
         "texture_biomarkers": "एक्स-रे बनावट बायोमार्कर्स",
+        "characteristics_header": "छवि की विशेषताएँ",
+        "fusion_fallback": "फीचर और रोगी-मेटाडेटा वोट के प्रशिक्षित पैरामीटर उपलब्ध नहीं हैं; यह परिणाम केवल कैलिब्रेटेड CNN वोट पर आधारित है।",
         "dense_area": "घना पैरेन्काइमल क्षेत्र",
         "asymmetry": "हेमिथोरेक्स विषमता सूचकांक",
         "heterogeneity": "बनावट विषमता (Heterogeneity)",
         "clahe_label": "कंट्रास्ट-संवर्धित (CLAHE) दृश्य",
+        "occlusion_label": "3 × 3 ऑक्लूज़न मानचित्र (संभाव्यता में कमी)",
         "original_img_label": "मूल एक्स-रे छवि",
         "export_btn": "नैदानिक ट्राइएज सारांश डाउनलोड करें (JSON)",
         "reset_btn": "नया रोगी प्रारंभ करें (फ़ॉर्म साफ़ करें)",
@@ -467,9 +473,12 @@ def main():
 
             # 2. Process Chest X-Ray
             clahe_preview = None
+            occlusion_preview = None
             if image_source is not None:
                 try:
-                    lung_model_out, lung_fused_out, clahe_preview = analyse_xray(image_source, patient_meta)
+                    lung_model_out, lung_fused_out, clahe_preview, occlusion_preview = analyse_xray(
+                        image_source, patient_meta
+                    )
                     lung_res = (lung_model_out, lung_fused_out)
                     p_xray = lung_fused_out.p_abnormal
                 except Exception as exc:
@@ -600,10 +609,40 @@ def main():
                 if asym is not None: st.write(f"- {t['asymmetry']}: **{asym:.3f}**")
                 if het is not None: st.write(f"- {t['heterogeneity']}: **{het:.2f}**")
 
+                st.markdown(f"**{t['characteristics_header']}**")
+                characteristics = pd.DataFrame({
+                    "Characteristic": list(sec),
+                    "Value": [f"{value:.4g}" for value in sec.values()],
+                })
+                st.dataframe(characteristics, use_container_width=True, hide_index=True)
+
                 if clahe_preview is not None:
                     st.image(clahe_preview, width=220, caption=t["clahe_label"])
 
+                if occlusion_preview is not None:
+                    st.markdown(f"**{t['occlusion_label']}**")
+                    fig, ax = plt.subplots(figsize=(3.2, 3.0), dpi=100)
+                    low = float(np.min(occlusion_preview))
+                    high = float(np.max(occlusion_preview))
+                    if high - low < 1e-8:
+                        high = low + 1e-8
+                    heatmap = ax.imshow(occlusion_preview, cmap="Blues", vmin=low, vmax=high)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    for row in range(3):
+                        for col in range(3):
+                            ax.text(
+                                col, row, f"{occlusion_preview[row, col]:+.3f}",
+                                ha="center", va="center", color="#102a43", fontsize=8,
+                            )
+                    fig.colorbar(heatmap, ax=ax, fraction=0.046, pad=0.04)
+                    fig.tight_layout()
+                    st.pyplot(fig, clear_figure=True)
+                    plt.close(fig)
+
                 st.markdown(f"**{t['fusion_breakdown']}**")
+                if set(l_fused_out.votes) == {"cnn"}:
+                    st.info(t["fusion_fallback"])
                 for vote_name, vote_val in l_fused_out.votes.items():
                     v_label = t.get(f"vote_{vote_name}", vote_name)
                     w_val = l_fused_out.weights.get(vote_name, 0.0)
