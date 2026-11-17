@@ -13,7 +13,6 @@ region that core.descriptors uses for the dense-area measure.
 
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
 CLIP_LIMIT = 2.0
@@ -35,11 +34,22 @@ def to_uint8(img01: np.ndarray) -> np.ndarray:
     return np.clip(np.nan_to_num(np.asarray(img01, dtype=np.float32)) * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
 
+def _cv2():
+    """OpenCV is imported only when a CLAHE view is made, so code that merely imports this module
+    (and the CI, which installs requirements.txt only) does not need it."""
+    try:
+        import cv2
+    except ImportError as exc:                                   # pragma: no cover
+        raise RuntimeError("CLAHE needs OpenCV; install lung/requirements-lung.txt") from exc
+    return cv2
+
+
 def clahe_view(img01: np.ndarray) -> np.ndarray:
     """The contrast-enhanced view of a 2-D image in [0, 1], as uint8 (for display)."""
     img01 = np.asarray(img01)
     if img01.ndim != 2:
         raise ValueError(f"expected a 2-D grayscale image, got shape {img01.shape}")
+    cv2 = _cv2()
     return cv2.createCLAHE(clipLimit=CLIP_LIMIT, tileGridSize=TILE_GRID).apply(to_uint8(img01))
 
 
@@ -47,6 +57,7 @@ def clahe_numbers(img01: np.ndarray, view: np.ndarray | None = None) -> dict[str
     """The three texture numbers for the lung area of the CLAHE view."""
     view = clahe_view(img01) if view is None else view
     roi = lung_area(*view.shape)
+    cv2 = _cv2()
     lap = cv2.Laplacian(view.astype(np.float32), cv2.CV_32F)
     return {
         "clahe_mean": float(view[roi].mean()),

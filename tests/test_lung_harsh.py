@@ -27,8 +27,14 @@ def _img(seed=0):
     return np.clip(base + rng.normal(0, 0.05, (96, 96)), 0, 1).astype(np.float32)
 
 
+def _features():
+    """Twelve made-up characteristics, so the fusion tests do not need OpenCV (the CI has none)."""
+    return {c: float(i + 1) for i, c in enumerate(FEATURE_COLUMNS)}
+
+
 # ------------------------------------------------------------------ CLAHE
 def test_clahe_view_is_uint8_96x96_and_does_not_touch_its_input():
+    pytest.importorskip("cv2")
     img = _img()
     before = img.copy()
     v = clahe_view(img)
@@ -37,6 +43,7 @@ def test_clahe_view_is_uint8_96x96_and_does_not_touch_its_input():
 
 
 def test_clahe_numbers_are_three_finite_values_in_lung_area():
+    pytest.importorskip("cv2")
     nums = clahe_numbers(_img())
     assert tuple(nums) == CLAHE_COLUMNS
     assert all(np.isfinite(v) for v in nums.values())
@@ -45,16 +52,19 @@ def test_clahe_numbers_are_three_finite_values_in_lung_area():
 
 
 def test_clahe_numbers_see_texture():
+    pytest.importorskip("cv2")
     flat = np.full((96, 96), 0.5, np.float32)
     assert clahe_numbers(flat)["clahe_abs_laplacian"] < clahe_numbers(_img())["clahe_abs_laplacian"]
 
 
 def test_clahe_rejects_a_colour_image():
+    pytest.importorskip("cv2")
     with pytest.raises(ValueError):
         clahe_view(np.zeros((96, 96, 3)))
 
 
 def test_characteristics_are_the_twelve_feature_columns():
+    pytest.importorskip("cv2")
     row = characteristics(_img())
     assert list(row) == FEATURE_COLUMNS and len(row) == 12
 
@@ -85,7 +95,7 @@ def test_params_are_plain_json_numbers():
 
 
 def test_xray_fusion_uses_every_vote_that_is_present():
-    out = lf.xray_fusion(0.8, characteristics(_img()), PatientMetadata(age_years=60, sex="male"), _params())
+    out = lf.xray_fusion(0.8, _features(), PatientMetadata(age_years=60, sex="male"), _params())
     assert out.modality == "xray" and set(out.votes) == {"cnn", "features", "metadata"}
     assert sum(out.weights.values()) == pytest.approx(1.0)
     assert out.p_abnormal == pytest.approx(sum(out.weights[k] * out.votes[k] for k in out.votes))
@@ -95,7 +105,7 @@ def test_missing_votes_get_weight_zero_and_the_rest_are_divided_by_their_sum():
     p = _params()
     out = lf.xray_fusion(0.7, None, None, p)
     assert out.votes == {"cnn": 0.7} and out.weights == {"cnn": 1.0}
-    out = lf.xray_fusion(0.7, characteristics(_img()), None, p)
+    out = lf.xray_fusion(0.7, _features(), None, p)
     assert set(out.weights) == {"cnn", "features"}
     assert out.weights["cnn"] == pytest.approx(0.85 / 0.90)
 
@@ -122,7 +132,7 @@ def test_missing_age_uses_the_fill():
 
 def test_a_single_missing_characteristic_is_filled_with_its_median():
     vote = _params()["feature_vote"]
-    full = characteristics(_img())
+    full = _features()
     fill = vote["fill"][vote["columns"].index("clahe_std")]
     a = lf.feature_vote_probability(dict(full, clahe_std=float("nan")), vote)
     b = lf.feature_vote_probability(dict(full, clahe_std=fill), vote)
@@ -138,7 +148,7 @@ def test_committed_params_file_gives_a_valid_answer():
     if not lf.PARAMS_JSON.exists():
         pytest.skip("reports/xray_fusion_params.json not generated yet")
     p = json.loads(lf.PARAMS_JSON.read_text())
-    out = lf.xray_fusion(0.5, characteristics(_img()), PatientMetadata(age_years=50, sex="female"), p)
+    out = lf.xray_fusion(0.5, _features(), PatientMetadata(age_years=50, sex="female"), p)
     assert 0 <= out.p_abnormal <= 1 and out.weights["metadata"] <= 0.3 + 1e-9
 
 
