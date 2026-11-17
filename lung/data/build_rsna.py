@@ -12,7 +12,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pydicom
 from PIL import Image
 from sklearn.model_selection import StratifiedKFold
 
@@ -36,16 +35,21 @@ CLASS_TO_LABEL = {
 
 
 def parse_age(value: object) -> float:
-    """Convert DICOM PatientAge (e.g. 057Y, 006M) to years."""
+    """Convert RSNA age values to years.
+
+    DICOM PatientAge normally carries a unit suffix (for example ``057Y``),
+    but the RSNA files also contain plain digit strings such as ``57``. Treat
+    those as years so valid ages are not silently dropped from the manifest.
+    """
     if value is None:
         return np.nan
 
-    match = re.fullmatch(r"\s*(\d{1,3})([YMWD])\s*", str(value).upper())
+    match = re.fullmatch(r"\s*(\d{1,3})([YMWD]?)\s*", str(value).upper())
     if not match:
         return np.nan
 
     amount = int(match.group(1))
-    unit = match.group(2)
+    unit = match.group(2) or "Y"
 
     if unit == "Y":
         return float(amount)
@@ -56,9 +60,38 @@ def parse_age(value: object) -> float:
     return amount / 365.0
 
 
+def _metadata_from_dataset(ds) -> dict:
+    """Extract the metadata fields used in the manifest from a DICOM dataset."""
+    return {
+        "age": parse_age(getattr(ds, "PatientAge", None)),
+        "sex": str(getattr(ds, "PatientSex", "UNKNOWN")).strip().upper(),
+        "view_position": str(
+            getattr(ds, "ViewPosition", "UNKNOWN")
+        ).strip().upper(),
+    }
+
+
+def _dcmread(dicom_path: Path, **kwargs):
+    """Import the optional RSNA dependency only when DICOM data is read."""
+    try:
+        import pydicom
+    except ImportError as exc:
+        raise RuntimeError(
+            "Building the RSNA manifest requires pydicom; install "
+            "lung/requirements-lung.txt first."
+        ) from exc
+    return pydicom.dcmread(dicom_path, **kwargs)
+
+
+def read_dicom_metadata(dicom_path: Path) -> dict:
+    """Read manifest metadata without decoding the DICOM pixel data."""
+    ds = _dcmread(dicom_path, stop_before_pixels=True)
+    return _metadata_from_dataset(ds)
+
+
 def dicom_to_png(dicom_path: Path, png_path: Path) -> dict:
     """Read DICOM pixels and metadata, then save a square 256x256 PNG."""
-    ds = pydicom.dcmread(dicom_path)
+    ds = _dcmread(dicom_path)
 
     pixels = ds.pixel_array.astype(np.float32)
 
@@ -91,16 +124,12 @@ def dicom_to_png(dicom_path: Path, png_path: Path) -> dict:
     png_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(png_path, format="PNG")
 
-    return {
-        "age": parse_age(getattr(ds, "PatientAge", None)),
-        "sex": str(getattr(ds, "PatientSex", "UNKNOWN")).strip().upper(),
-        "view_position": str(
-            getattr(ds, "ViewPosition", "UNKNOWN")
-        ).strip().upper(),
-    }
+    return _metadata_from_dataset(ds)
 
 
-def build_manifest(n_folds: int = 5, seed: int = 0) -> pd.DataFrame:
+def build_manifest(
+    n_folds: int = 5, seed: int = 0, metadata_only: bool = False
+) -> pd.DataFrame:
     """Convert selected patients, create caches, and assign patient folds."""
     if not CLASS_CSV.exists():
         raise FileNotFoundError(f"Missing class CSV: {CLASS_CSV}")
@@ -143,7 +172,12 @@ def build_manifest(n_folds: int = 5, seed: int = 0) -> pd.DataFrame:
             continue
 
         try:
-            metadata = dicom_to_png(dicom_path, png_path)
+            cache_path = CACHE_DIR / f"{patient_id}.npy"
+            can_reuse_images = png_path.is_file() and cache_path.is_file()
+            if metadata_only and can_reuse_images:
+                metadata = read_dicom_metadata(dicom_path)
+            else:
+                metadata = dicom_to_png(dicom_path, png_path)
 
             age = metadata["age"]
             if not np.isnan(age) and age > 100:
@@ -151,11 +185,11 @@ def build_manifest(n_folds: int = 5, seed: int = 0) -> pd.DataFrame:
                 skipped += 1
                 continue
 
-            # Use the shared core image front-end to create the 96x96 cache.
-            cache_path = CACHE_DIR / f"{patient_id}.npy"
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            image_features = features_for_image(str(png_path))
-            np.save(cache_path, image_features.astype(np.float32))
+            if not (metadata_only and can_reuse_images):
+                # Use the shared core image front-end to create the 96x96 cache.
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                image_features = features_for_image(str(png_path))
+                np.save(cache_path, image_features.astype(np.float32))
 
             records.append({
                 "path": png_path.relative_to(ROOT).as_posix(),
@@ -226,9 +260,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n-folds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="Reuse existing PNG/cache files and reread only DICOM headers",
+    )
     args = parser.parse_args()
 
-    build_manifest(n_folds=args.n_folds, seed=args.seed)
+    build_manifest(
+        n_folds=args.n_folds, seed=args.seed, metadata_only=args.metadata_only
+    )
     return 0
 
 
