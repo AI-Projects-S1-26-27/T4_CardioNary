@@ -25,25 +25,40 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
+from lung.model.features import FEATURE_COLUMNS as _FEATURES
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FEATURES_CSV = REPO_ROOT / "reports" / "xray_features_kermany.csv"
 OUTPUT_CSV = REPO_ROOT / "reports" / "xray_plr_kermany.csv"
 OUTPUT_JSON = REPO_ROOT / "reports" / "xray_plr_kermany.json"
 
-FEATURE_COLUMNS = [
-    "dense_area_pct",
-    "asymmetry_index",
-    "zone_upper_pct",
-    "zone_middle_pct",
-    "zone_lower_pct",
-    "largest_region_fraction",
-    "regions_detected",
-    "mean_intensity",
-    "texture_heterogeneity",
-    "clahe_std_1",
-    "clahe_std_2",
-    "clahe_std_4",
-]
+FEATURE_COLUMNS = list(_FEATURES)
+
+
+def fit_feature_vote(df: pd.DataFrame, random_state: int = 42) -> dict:
+    """Fit the final feature vote on ALL rows of ``df`` and return it as plain numbers.
+
+    Non-finite values are replaced by the column median ("filling values"), then the
+    columns are standardised, then logistic regression with balanced class weights.
+    This is what reports/xray_fusion_params.json stores for the dashboard.
+    """
+    X = df[FEATURE_COLUMNS].to_numpy(dtype=float)
+    X[~np.isfinite(X)] = np.nan
+    fill = np.nan_to_num(np.nanmedian(X, axis=0), nan=0.0)
+    X = np.where(np.isnan(X), fill, X)
+    scaler = StandardScaler().fit(X)
+    clf = LogisticRegression(C=1.0, class_weight="balanced", solver="lbfgs", max_iter=1000,
+                             random_state=random_state)
+    clf.fit(scaler.transform(X), df["label"].to_numpy(dtype=int))
+    return {
+        "columns": list(FEATURE_COLUMNS),
+        "fill": fill.tolist(),
+        "scaler_mean": scaler.mean_.tolist(),
+        "scaler_scale": scaler.scale_.tolist(),
+        "coef": clf.coef_[0].tolist(),
+        "intercept": float(clf.intercept_[0]),
+        "fitted_on": f"{len(df)} Kermany images, all 5 folds",
+    }
 
 
 def run_feature_vote(
@@ -90,8 +105,8 @@ def run_feature_vote(
 
         # Fit Logistic Regression on training fold
         clf = LogisticRegression(
-            penalty="l2",
             C=1.0,
+            class_weight="balanced",     # roadmap section 2: balanced class weights
             solver="lbfgs",
             max_iter=1000,
             random_state=random_state,

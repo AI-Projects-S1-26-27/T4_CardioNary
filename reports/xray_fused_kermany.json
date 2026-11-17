@@ -1,11 +1,86 @@
 {
   "dataset": "kermany",
-  "n_images": 5856,
-  "n_patients": 2790,
   "votes_used": [
     "cnn",
     "features"
   ],
-  "auroc_image_level": 0.988,
-  "auroc_patient_level": 0.9879
+  "n_images": 5856,
+  "n_patients": 2790,
+  "calibrated_cnn": {
+    "auroc": 0.9839925406839195,
+    "sensitivity_at_90_specificity": 0.9878305640065528
+  },
+  "fused": {
+    "auroc": 0.9884622759459084,
+    "sensitivity_at_90_specificity": 0.9885326468523286
+  },
+  "cnn_vs_fused": {
+    "a": {
+      "auroc": 0.9839925406839195,
+      "ci95": [
+        0.9798838619947664,
+        0.9880524206209922
+      ]
+    },
+    "b": {
+      "auroc": 0.9884622759459084,
+      "ci95": [
+        0.9853710332338109,
+        0.9914634213233661
+      ]
+    },
+    "difference_b_minus_a": {
+      "estimate": 0.004469735261988905,
+      "ci95": [
+        0.002202715038000755,
+        0.006883639137398045
+      ]
+    },
+    "resamples": 1000
+  },
+  "auroc_image_level": 0.9885,
+  "auroc_patient_level": 0.9883,
+  "per_fold": [
+    {
+      "fold": 0,
+      "temperature": 0.9579145289786675,
+      "weights": {
+        "cnn": 0.95,
+        "features": 0.05
+      }
+    },
+    {
+      "fold": 1,
+      "temperature": 0.9721080392680586,
+      "weights": {
+        "cnn": 0.95,
+        "features": 0.05
+      }
+    },
+    {
+      "fold": 2,
+      "temperature": 0.9391820966850544,
+      "weights": {
+        "cnn": 0.95,
+        "features": 0.05
+      }
+    },
+    {
+      "fold": 3,
+      "temperature": 0.9411715030144587,
+      "weights": {
+        "cnn": 0.95,
+        "features": 0.05
+      }
+    },
+    {
+      "fold": 4,
+      "temperature": 0.9103424958487801,
+      "weights": {
+        "cnn": 0.95,
+        "features": 0.05
+      }
+    }
+  ],
+  "note": "temperature and weights for each fold are fitted on the other four folds only; bootstrap: 1,000 resamples of images, seed 0"
 }

@@ -19,6 +19,7 @@ from core.contracts import FusedOutput, ModelOutput, PatientMetadata
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CALIBRATION_JSON = REPO_ROOT / "reports" / "xray_calibration_kermany.json"
+FUSION_PARAMS_JSON = REPO_ROOT / "reports" / "xray_fusion_params.json"
 
 _INTERP = None
 _NORM = None
@@ -97,6 +98,15 @@ def _calibrate_probability(probability: float, temperature: float) -> float:
 
 
 def _temperature() -> float:
+    """T from the committed fitted numbers (reports/xray_fusion_params.json); the app fits nothing.
+    Falls back to the calibration report, then to the last known value."""
+    if FUSION_PARAMS_JSON.exists():
+        try:
+            value = float(json.loads(FUSION_PARAMS_JSON.read_text(encoding="utf-8"))["T"])
+            if math.isfinite(value) and value > 0:
+                return value
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            pass
     if CALIBRATION_JSON.exists():
         try:
             data = json.loads(CALIBRATION_JSON.read_text(encoding="utf-8"))

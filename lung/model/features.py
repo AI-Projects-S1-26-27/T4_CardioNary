@@ -1,9 +1,10 @@
-"""Extract classical and CLAHE image features from the Kermany chest X-ray cache.
+"""Extract the numeric characteristics of every Kermany (or RSNA) chest X-ray.
 
-Computes numeric descriptors from core.descriptors.vision_descriptors plus
-three CLAHE texture heterogeneity (standard deviation) features across clip
-limits 1.0, 2.0, and 4.0. Text fields (pattern, distribution, predominant zone)
-are excluded.
+For each 96 x 96 image in the cache: the numeric fields of
+core.descriptors.vision_descriptors (dense area, asymmetry index, zone percentages,
+largest-region fraction, regions detected, mean intensity, texture heterogeneity)
+plus the three CLAHE texture numbers of lung.model.clahe. Text fields such as
+"pattern" are left out.
 
 Output:
     reports/xray_features_kermany.csv
@@ -17,11 +18,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pandas as pd
 
 from core.descriptors import vision_descriptors
+from lung.model.clahe import CLAHE_COLUMNS, clahe_numbers
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CACHE_PATH = REPO_ROOT / "data" / "cache" / "kermany_logmel.npz"
@@ -29,95 +30,84 @@ MANIFEST_PATH = REPO_ROOT / "data" / "manifests" / "kermany_manifest.csv"
 OUTPUT_PATH = REPO_ROOT / "reports" / "xray_features_kermany.csv"
 
 
+
+VISION_COLUMNS = (
+    "dense_area_pct", "asymmetry_index", "zone_upper_pct", "zone_middle_pct", "zone_lower_pct",
+    "largest_region_fraction", "regions_detected", "mean_intensity", "texture_heterogeneity",
+)
+FEATURE_COLUMNS = list(VISION_COLUMNS) + list(CLAHE_COLUMNS)
+
+
+def characteristics(img01: np.ndarray) -> dict[str, float]:
+    """The 12 numbers the feature vote uses, for one image in [0, 1].
+
+    This is the single definition: the offline tool and the RSNA run call it too.
+    """
+    desc = vision_descriptors(img01)
+    zones = desc.get("zone_distribution_pct", {})
+    row = {
+        "dense_area_pct": desc["dense_area_pct"],
+        "asymmetry_index": desc["asymmetry_index"],
+        "zone_upper_pct": zones.get("upper", 0.0),
+        "zone_middle_pct": zones.get("middle", 0.0),
+        "zone_lower_pct": zones.get("lower", 0.0),
+        "largest_region_fraction": desc["largest_region_fraction"],
+        "regions_detected": desc["regions_detected"],
+        "mean_intensity": desc["mean_intensity"],
+        "texture_heterogeneity": desc["texture_heterogeneity"],
+    }
+    row.update(clahe_numbers(img01))
+    return {k: float(v) for k, v in row.items()}
+
+
 def extract_features(
     cache_path: Path = CACHE_PATH,
     manifest_path: Path = MANIFEST_PATH,
     output_path: Path = OUTPUT_PATH,
 ) -> pd.DataFrame:
-    """Extract numeric vision and CLAHE descriptors for every Kermany image."""
+    """Compute the characteristics of every image in a cache, in the cache's own order."""
     if not cache_path.exists():
         raise FileNotFoundError(f"Cache file not found at {cache_path}. Run core.preprocess first.")
 
     print(f"Loading image cache from {cache_path}...")
-    cache = np.load(cache_path)
-    X = cache["X"]  # shape (N, 96, 96) float32 in [0, 1]
+    cache = np.load(cache_path, allow_pickle=True)
+    X = cache["X"]  # (N, 96, 96) float32 in [0, 1]
     n_images = len(X)
     print(f"Loaded {n_images} images.")
-
-    # Match filenames and metadata if manifest is available
-    if manifest_path.exists():
-        df_manifest = pd.read_csv(manifest_path)
-        filenames = df_manifest["filename"].tolist() if "filename" in df_manifest.columns else [f"img_{i:05d}" for i in range(n_images)]
-        diagnoses = df_manifest["diagnosis"].tolist() if "diagnosis" in df_manifest.columns else None
-    else:
-        filenames = [f"img_{i:05d}" for i in range(n_images)]
-        diagnoses = None
 
     patient_ids = cache["patient_id"]
     labels = cache["y"]
     folds = cache["fold"]
 
-    # Pre-instantiate CLAHE filters for clip limits 1.0, 2.0, and 4.0
-    clahe_filters = {
-        "clahe_std_1": cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8)),
-        "clahe_std_2": cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)),
-        "clahe_std_4": cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8)),
-    }
-
-    # Pre-compute thoracic ROI mask for 96x96 image
-    h, w = X[0].shape
-    b = int(0.08 * h)
-    roi = np.zeros((h, w), dtype=bool)
-    roi[b : h - b, b : w - b] = True
-    roi[:, int(0.44 * w) : int(0.56 * w)] = False
+    filenames, diagnoses = [f"img_{i:05d}" for i in range(n_images)], None
+    if manifest_path.exists():
+        man = pd.read_csv(manifest_path)
+        if len(man) == n_images:        # a manifest of another length cannot belong to this cache
+            if "filename" in man.columns:
+                filenames = man["filename"].tolist()
+            if "diagnosis" in man.columns:
+                diagnoses = man["diagnosis"].tolist()
+        else:
+            print(f"[warn] manifest has {len(man)} rows but the cache {n_images}; ignoring its names")
 
     rows = []
-    print("Computing numeric vision descriptors and CLAHE numbers...")
+    print("Computing characteristics and CLAHE numbers...")
     for i in range(n_images):
-        img = X[i]
-
-        # 1. Classical numeric descriptors from core.descriptors
-        desc = vision_descriptors(img)
-        zones = desc.get("zone_distribution_pct", {})
-
-        # 2. CLAHE texture heterogeneity at clip limits 1.0, 2.0, 4.0
-        u8 = np.clip(img * 255.0, 0, 255).astype(np.uint8)
-        clahe_vals = {
-            k: round(float(np.std(filt.apply(u8)[roi])), 1)
-            for k, filt in clahe_filters.items()
-        }
-
         row = {
             "filename": filenames[i],
             "patient_id": str(patient_ids[i]),
             "label": int(labels[i]),
             "fold": int(folds[i]),
-            "dense_area_pct": desc["dense_area_pct"],
-            "asymmetry_index": desc["asymmetry_index"],
-            "zone_upper_pct": zones.get("upper", 0.0),
-            "zone_middle_pct": zones.get("middle", 0.0),
-            "zone_lower_pct": zones.get("lower", 0.0),
-            "largest_region_fraction": desc["largest_region_fraction"],
-            "regions_detected": desc["regions_detected"],
-            "mean_intensity": desc["mean_intensity"],
-            "texture_heterogeneity": desc["texture_heterogeneity"],
-            "clahe_std_1": clahe_vals["clahe_std_1"],
-            "clahe_std_2": clahe_vals["clahe_std_2"],
-            "clahe_std_4": clahe_vals["clahe_std_4"],
+            **characteristics(X[i]),
         }
         if diagnoses is not None:
             row["diagnosis"] = diagnoses[i]
-
         rows.append(row)
 
     out_df = pd.DataFrame(rows)
-
-    # Ensure output directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_csv(output_path, index=False)
-    print(f"Successfully computed features for {len(out_df)} images.")
-    print(f"Output saved to: {output_path}")
-
+    print(f"Computed characteristics for {len(out_df)} images -> {output_path}")
     return out_df
 
 

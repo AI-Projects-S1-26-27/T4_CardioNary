@@ -42,17 +42,17 @@
     }
   },
   "rsna_agreement": {
-    "n_images": 14863,
-    "n_patients": 14863,
+    "n_images": 14860,
+    "n_patients": 14860,
     "item_agreement": 0.9611,
     "item_agreement_ci95": [
-      0.9578,
-      0.9641
+      0.958,
+      0.9643
     ],
     "patient_agreement": 0.9611,
     "patient_agreement_ci95": [
-      0.9581,
-      0.9641
+      0.9579,
+      0.9642
     ],
     "discordant_images": 578,
     "discordant_patients": 578
@@ -61,22 +61,22 @@
     "0": {
       "lower / central": 0,
       "lower / patient left": 0,
-      "lower / patient right": 1,
-      "middle / central": 4,
-      "middle / patient left": 23,
+      "lower / patient right": 3,
+      "middle / central": 3,
+      "middle / patient left": 22,
       "middle / patient right": 0,
-      "upper / central": 19,
-      "upper / patient left": 12,
+      "upper / central": 14,
+      "upper / patient left": 11,
       "upper / patient right": 1
     },
     "1": {
-      "lower / central": 10,
+      "lower / central": 14,
       "lower / patient left": 1,
       "lower / patient right": 1,
-      "middle / central": 24,
+      "middle / central": 25,
       "middle / patient left": 1,
       "middle / patient right": 3,
-      "upper / central": 0,
+      "upper / central": 1,
       "upper / patient left": 0,
       "upper / patient right": 0
     }

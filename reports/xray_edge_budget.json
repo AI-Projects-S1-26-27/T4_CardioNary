@@ -3,23 +3,23 @@
     "file_size_bytes": 625080,
     "file_size_kb": 610.43,
     "agreement_with_float_fold0": 0.990058,
-    "mean_time_per_image_ms": 0.188,
-    "peak_memory_kb": 0.33
+    "mean_time_per_image_ms": 0.494,
+    "peak_memory_kb": 0.31
   },
   "adapted_int8": {
     "file_size_bytes": 625080,
     "file_size_kb": 610.43,
-    "agreement_with_float_fold0": 0.958575,
-    "mean_time_per_image_ms": 0.188,
-    "peak_memory_kb": 0.33
+    "agreement_with_float_fold0": 0.956918,
+    "mean_time_per_image_ms": 0.446,
+    "peak_memory_kb": 0.31
   },
   "whole_case_time": {
-    "cnn_ms": 0.193,
-    "characteristics_ms": 0.47,
-    "occlusion_ms": 1.837,
-    "votes_ms": 0.008,
-    "fusion_ms": 0.01,
-    "total_ms": 2.518
+    "cnn_ms": 0.54,
+    "characteristics_ms": 1.456,
+    "occlusion_ms": 6.256,
+    "votes_ms": 0.065,
+    "fusion_ms": 0.046,
+    "total_ms": 8.363
   },
   "meets_targets": {
     "size_under_1mb": true,

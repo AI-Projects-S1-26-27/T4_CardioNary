@@ -83,46 +83,16 @@ def predict_int8(interp, X01, mu, sd) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- X-ray characteristics
-def _roi(h: int, w: int) -> np.ndarray:
-    b = int(0.08 * h)
-    roi = np.zeros((h, w), dtype=bool)
-    roi[b:h - b, b:w - b] = True
-    roi[:, int(0.44 * w):int(0.56 * w)] = False
-    return roi
-
-
-def clahe_view(img01: np.ndarray, clip: float = 2.0) -> np.ndarray:
-    """Contrast-enhanced view (CLAHE, 8x8 tiles) as uint8, for display."""
-    import cv2
-    u8 = np.clip(img01 * 255.0, 0, 255).astype(np.uint8)
-    return cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8)).apply(u8)
+def clahe_view(img01: np.ndarray) -> np.ndarray:
+    """Contrast-enhanced view (CLAHE, clip 2.0, 8x8 tiles) as uint8, for display."""
+    from lung.model.clahe import clahe_view as view
+    return view(img01)
 
 
 def image_features(img01: np.ndarray) -> dict:
-    """The 12 numbers lung.model.features writes per image. Must stay identical to it
-    (tests/test_lung_app_features.py checks this against the committed CSV)."""
-    import cv2
-    from core.descriptors import vision_descriptors
-
-    desc = vision_descriptors(img01)
-    zones = desc.get("zone_distribution_pct", {})
-    u8 = np.clip(img01 * 255.0, 0, 255).astype(np.uint8)
-    roi = _roi(*img01.shape)
-    row = {
-        "dense_area_pct": desc["dense_area_pct"],
-        "asymmetry_index": desc["asymmetry_index"],
-        "zone_upper_pct": zones.get("upper", 0.0),
-        "zone_middle_pct": zones.get("middle", 0.0),
-        "zone_lower_pct": zones.get("lower", 0.0),
-        "largest_region_fraction": desc["largest_region_fraction"],
-        "regions_detected": desc["regions_detected"],
-        "mean_intensity": desc["mean_intensity"],
-        "texture_heterogeneity": desc["texture_heterogeneity"],
-    }
-    for name, clip in (("clahe_std_1", 1.0), ("clahe_std_2", 2.0), ("clahe_std_4", 4.0)):
-        f = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8))
-        row[name] = round(float(np.std(f.apply(u8)[roi])), 1)
-    return row
+    """The 12 numbers lung.model.features writes per image (one shared definition)."""
+    from lung.model.features import characteristics
+    return characteristics(img01)
 
 
 # --------------------------------------------------------------------------- metadata vote

@@ -4,7 +4,9 @@
     "fitted_on": "Kermany out-of-fold CNN probabilities, all 5 folds",
     "ece_before": 0.02686975825109772,
     "ece_after": 0.02474281088436351,
-    "target": "ece_after <= 0.05"
+    "target": "ece_after <= 0.05",
+    "rsna_ece_before": 0.06839792819650065,
+    "rsna_ece_after": 0.07466355473842777
   },
   "generalisation": {
     "weights_chosen_on": "Kermany out-of-fold predictions",
@@ -14,48 +16,132 @@
     },
     "plain_cnn_vs_cnn_plus_features": {
       "a": {
-        "auroc": 0.9071057222729249,
+        "auroc": 0.9070317522974254,
         "ci95": [
-          0.9018552834468777,
-          0.9121913674944365
+          0.9018047087110823,
+          0.9121602863000655
         ]
       },
       "b": {
-        "auroc": 0.9010170635266956,
+        "auroc": 0.898582222085255,
         "ci95": [
-          0.8954455258393994,
-          0.9061966863590741
+          0.8931157559582348,
+          0.9041240055800054
         ]
       },
       "difference_b_minus_a": {
-        "estimate": -0.006088658746229214,
+        "estimate": -0.00844953021217043,
         "ci95": [
-          -0.007345040874358058,
-          -0.004739161655568167
+          -0.009876106283979062,
+          -0.006996400232545158
         ]
       },
       "resamples": 1000
     },
     "feature_vote_alone": {
-      "auroc": 0.7235347968620436,
-      "sensitivity_at_90_specificity": 0.4013639387890885
+      "auroc": 0.7128738754580348,
+      "sensitivity_at_90_specificity": 0.43312208138759173
     },
     "plain_cnn": {
-      "auroc": 0.9071057222729249,
-      "sensitivity_at_90_specificity": 0.7752827677977379
+      "auroc": 0.9070317522974254,
+      "sensitivity_at_90_specificity": 0.7748498999332889
     },
     "cnn_plus_features": {
-      "auroc": 0.9010170635266956,
-      "sensitivity_at_90_specificity": 0.7737857618097139
+      "auroc": 0.898582222085255,
+      "sensitivity_at_90_specificity": 0.7735156771180787
     },
     "target": "AUROC gain >= +0.03",
-    "gain": -0.006088658746229214,
-    "meets_target": false
+    "gain": -0.00844953021217043,
+    "meets_target": false,
+    "adapted_cnn": {
+      "auroc": 0.8401670992467201,
+      "sensitivity_at_90_specificity": 0.40326884589726486
+    },
+    "adapted_cnn_plus_features": {
+      "auroc": 0.8456279125697326,
+      "sensitivity_at_90_specificity": 0.45413609072715144
+    },
+    "plain_cnn_vs_adapted_cnn": {
+      "a": {
+        "auroc": 0.9070317522974254,
+        "ci95": [
+          0.9018047087110823,
+          0.9121602863000655
+        ]
+      },
+      "b": {
+        "auroc": 0.8401670992467201,
+        "ci95": [
+          0.8336642848613712,
+          0.8463302623629333
+        ]
+      },
+      "difference_b_minus_a": {
+        "estimate": -0.06686465305070532,
+        "ci95": [
+          -0.07303361648777464,
+          -0.061244029359455075
+        ]
+      },
+      "resamples": 1000
+    },
+    "plain_cnn_vs_adapted_cnn_plus_features": {
+      "a": {
+        "auroc": 0.9070317522974254,
+        "ci95": [
+          0.9018047087110823,
+          0.9121602863000655
+        ]
+      },
+      "b": {
+        "auroc": 0.8456279125697326,
+        "ci95": [
+          0.8391932568133538,
+          0.8515832266247921
+        ]
+      },
+      "difference_b_minus_a": {
+        "estimate": -0.06140383972769281,
+        "ci95": [
+          -0.06666087373147932,
+          -0.05609232813248765
+        ]
+      },
+      "resamples": 1000
+    },
+    "cnn_plus_features_vs_adapted_cnn_plus_features": {
+      "a": {
+        "auroc": 0.898582222085255,
+        "ci95": [
+          0.8931157559582348,
+          0.9041240055800054
+        ]
+      },
+      "b": {
+        "auroc": 0.8456279125697326,
+        "ci95": [
+          0.8391932568133538,
+          0.8515832266247921
+        ]
+      },
+      "difference_b_minus_a": {
+        "estimate": -0.05295430951552238,
+        "ci95": [
+          -0.058900499256109046,
+          -0.047579037165098946
+        ]
+      },
+      "resamples": 1000
+    },
+    "adapted_gain": -0.06686465305070532,
+    "full_cardionary_gain": -0.06140383972769281,
+    "n_scored": 14828,
+    "n_excluded_used_for_adaptation": 32
   },
   "metadata_gain": {
     "weights_chosen_on": "the other four RSNA folds, rechosen for each fold",
-    "age_observed_rows": 0,
-    "age_note": "No RSNA ages were available; age features are constant after imputation, so the metadata vote uses sex only.",
+    "age_observed_rows": 14860,
+    "age_note": "Missing ages are imputed with each training fold's median.",
     "per_fold": [
       {
         "fold": 0,
@@ -65,8 +151,8 @@
         },
         "weights_with_metadata": {
           "cnn": 0.85,
-          "features": 0.05,
-          "metadata": 0.1
+          "features": 0.0,
+          "metadata": 0.15
         }
       },
       {
@@ -77,8 +163,8 @@
         },
         "weights_with_metadata": {
           "cnn": 0.85,
-          "features": 0.05,
-          "metadata": 0.1
+          "features": 0.0,
+          "metadata": 0.15
         }
       },
       {
@@ -89,8 +175,8 @@
         },
         "weights_with_metadata": {
           "cnn": 0.85,
-          "features": 0.05,
-          "metadata": 0.1
+          "features": 0.0,
+          "metadata": 0.15
         }
       },
       {
@@ -101,8 +187,8 @@
         },
         "weights_with_metadata": {
           "cnn": 0.85,
-          "features": 0.05,
-          "metadata": 0.1
+          "features": 0.0,
+          "metadata": 0.15
         }
       },
       {
@@ -113,57 +199,140 @@
         },
         "weights_with_metadata": {
           "cnn": 0.85,
-          "features": 0.05,
-          "metadata": 0.1
+          "features": 0.0,
+          "metadata": 0.15
         }
       }
     ],
     "cnn_plus_features_vs_plus_metadata": {
       "a": {
-        "auroc": 0.8954666458894811,
+        "auroc": 0.8935478575699715,
         "ci95": [
-          0.8896088214410421,
-          0.9010627316750386
+          0.887334070255174,
+          0.8993081841533389
         ]
       },
       "b": {
-        "auroc": 0.9002700545506359,
+        "auroc": 0.9075827398849078,
         "ci95": [
-          0.8945224161686013,
-          0.9055247505070518
+          0.9021812505324724,
+          0.9124235234132343
         ]
       },
       "difference_b_minus_a": {
-        "estimate": 0.004803408661154807,
+        "estimate": 0.014034882314936326,
         "ci95": [
-          0.00419162596757768,
-          0.005421508312868015
+          0.011923031926923197,
+          0.016251566422166068
         ]
       },
       "resamples": 1000
     },
     "metadata_vote_alone": {
-      "auroc": 0.5069128116681185,
-      "sensitivity_at_90_specificity": 0.0
+      "auroc": 0.5366750581868212,
+      "sensitivity_at_90_specificity": 0.1335662009314704
     },
     "without_metadata": {
-      "auroc": 0.8954666458894811,
-      "sensitivity_at_90_specificity": 0.7711244178310046
+      "auroc": 0.8935478575699715,
+      "sensitivity_at_90_specificity": 0.7704590818363274
     },
     "with_metadata": {
-      "auroc": 0.9002700545506359,
-      "sensitivity_at_90_specificity": 0.7737857618097139
+      "auroc": 0.9075827398849078,
+      "sensitivity_at_90_specificity": 0.7746174318030605
     },
-    "mean_metadata_weight": 0.1,
+    "mean_metadata_weight": 0.15,
     "target": "AUROC gain >= +0.02 with w3 <= 0.3",
-    "gain": 0.004803408661154807,
+    "gain": 0.014034882314936326,
     "meets_target": false,
+    "with_adapted_cnn": {
+      "scored": "14828 patients (the 32 used to adapt are left out)",
+      "adapted_cnn_plus_features": {
+        "auroc": 0.8426259112355097,
+        "sensitivity_at_90_specificity": 0.5011674449633089
+      },
+      "adapted_cnn_plus_features_plus_metadata": {
+        "auroc": 0.8398192393963124,
+        "sensitivity_at_90_specificity": 0.38725817211474317
+      },
+      "metadata_gain_with_adapted_cnn": {
+        "a": {
+          "auroc": 0.8426259112355097,
+          "ci95": [
+            0.8360855762255092,
+            0.8483136415555291
+          ]
+        },
+        "b": {
+          "auroc": 0.8398192393963124,
+          "ci95": [
+            0.8333222823225825,
+            0.845856896158604
+          ]
+        },
+        "difference_b_minus_a": {
+          "estimate": -0.00280667183919725,
+          "ci95": [
+            -0.006827305062300002,
+            0.0014704869544241216
+          ]
+        },
+        "resamples": 1000
+      },
+      "plain_cnn_vs_full_branch_with_metadata": {
+        "a": {
+          "auroc": 0.9070317522974254,
+          "ci95": [
+            0.9018047087110823,
+            0.9121602863000655
+          ]
+        },
+        "b": {
+          "auroc": 0.8398192393963124,
+          "ci95": [
+            0.8333222823225825,
+            0.845856896158604
+          ]
+        },
+        "difference_b_minus_a": {
+          "estimate": -0.06721251290111296,
+          "ci95": [
+            -0.07310600004630083,
+            -0.061831206605554904
+          ]
+        },
+        "resamples": 1000
+      },
+      "plain_cnn_plus_features_plus_metadata_vs_adapted": {
+        "a": {
+          "auroc": 0.907525722160184,
+          "ci95": [
+            0.9022754330208287,
+            0.9125373205752085
+          ]
+        },
+        "b": {
+          "auroc": 0.8398192393963124,
+          "ci95": [
+            0.8333222823225825,
+            0.845856896158604
+          ]
+        },
+        "difference_b_minus_a": {
+          "estimate": -0.06770648276387159,
+          "ci95": [
+            -0.0733549207257064,
+            -0.06232438180881438
+          ]
+        },
+        "resamples": 1000
+      }
+    },
     "note": "metadata vote is trained on adults (RSNA) while the CNN is trained on children (Kermany); view position is never an input"
   },
   "app_weights": {
     "cnn": 0.85,
-    "features": 0.05,
-    "metadata": 0.1
+    "features": 0.0,
+    "metadata": 0.15
   },
   "bootstrap": "1,000 resamples of cases (one image per RSNA patient), seed 0, 95% percentile interval"
 }

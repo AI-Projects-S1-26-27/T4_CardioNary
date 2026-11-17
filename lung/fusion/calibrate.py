@@ -23,6 +23,8 @@ import pandas as pd
 from scipy.optimize import minimize_scalar
 from scipy.special import logsumexp
 
+from lung.eval.metrics import expected_calibration_error as ece_binary
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PLR_CSV = REPO_ROOT / "reports" / "xray_plr_kermany.csv"
 DEFAULT_OUT_JSON = REPO_ROOT / "reports" / "xray_calibration_kermany.json"
@@ -128,7 +130,7 @@ def negative_log_likelihood(probs: np.ndarray, labels: np.ndarray) -> float:
 
 
 def expected_calibration_error(
-    probs: np.ndarray, labels: np.ndarray, n_bins: int = 10
+    probs: np.ndarray, labels: np.ndarray, n_bins: int = 15
 ) -> float:
     """Compute Expected Calibration Error (ECE) for binary or multi-class predictions."""
     p = _to_class_probs(probs)
@@ -213,13 +215,13 @@ def calibrate_cnn_oof(
     p_cnn = df["p_pneumonia"].to_numpy()
 
     nll_raw = negative_log_likelihood(p_cnn, y)
-    ece_raw = expected_calibration_error(p_cnn, y)
+    ece_raw = ece_binary(y, p_cnn, n_bins=15)
 
     T = fit_temperature(p_cnn, y)
     p_cal = apply_temperature(p_cnn, T)
 
     nll_cal = negative_log_likelihood(p_cal, y)
-    ece_cal = expected_calibration_error(p_cal, y)
+    ece_cal = ece_binary(y, p_cal, n_bins=15)
 
     result = {
         "n_samples": int(len(df)),
@@ -228,6 +230,10 @@ def calibrate_cnn_oof(
         "nll_after": round(nll_cal, 4),
         "ece_before_pct": round(ece_raw * 100, 2),
         "ece_after_pct": round(ece_cal * 100, 2),
+        "ece_bins": 15,
+        "ece_target_pct": 5.0,
+        "meets_target": bool(ece_cal <= 0.05),
+        "fitted_on": "Kermany out-of-fold CNN probabilities, all 5 folds",
     }
 
     out_json.parent.mkdir(parents=True, exist_ok=True)
@@ -272,13 +278,13 @@ def main() -> int:
         pLR = df["pLR"].to_numpy()
 
         nll_raw = negative_log_likelihood(pLR, y)
-        ece_raw = expected_calibration_error(pLR, y)
+        ece_raw = ece_binary(y, pLR, n_bins=15)
 
         T_kermany = fit_temperature(pLR, y)
         pLR_cal = apply_temperature(pLR, T_kermany)
 
         nll_cal = negative_log_likelihood(pLR_cal, y)
-        ece_cal = expected_calibration_error(pLR_cal, y)
+        ece_cal = ece_binary(y, pLR_cal, n_bins=15)
 
         print(f"  Fitted Temperature T: {T_kermany:.4f}")
         print(f"  Negative Log-Likelihood: {nll_raw:.4f} -> {nll_cal:.4f}")
