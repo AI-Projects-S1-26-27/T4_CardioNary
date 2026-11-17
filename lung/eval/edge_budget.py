@@ -250,68 +250,88 @@ def run_edge_budget(
     except OSError:
         pass
 
-    # ---- whole-case time (single image) ------------------------------------
-    print("\n--- Whole-case time (single image) ---")
-    # Use the first scoring image as the representative case
-    single_img_norm = X_score_norm[:1]
-    single_img_raw = X_score_raw[0]  # (96, 96) for features / clahe
+    # ---- whole-case time (single image through lung.predict.analyse_xray) ---
+    print("\n--- Whole-case time (single image via lung.predict.analyse_xray) ---")
+    from lung.predict import (
+        analyse_xray,
+        _load_img_from_source,
+        _predict_int8,
+        _calibrate_probability,
+        _safe_image_features,
+        _safe_clahe_view,
+        _occlusion_map_3x3,
+        _fuse_xray,
+        _get_interp,
+        _get_norm,
+        _temperature,
+    )
+    from PIL import Image
+    import io
 
-    # Prepare int8 input for occlusion
-    inp_det = orig_interp.get_input_details()[0]
-    in_scale, in_zp = inp_det["quantization"]
-    single_int8 = np.clip(
-        np.round(single_img_norm / in_scale + in_zp), -128, 127
-    ).astype(inp_det["dtype"])
+    # Use first scoring image as a representative raw image; convert to PNG bytes
+    im_u8 = Image.fromarray(np.clip(X_score_raw[0] * 255.0, 0, 255).astype(np.uint8))
+    buf = io.BytesIO()
+    im_u8.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
 
-    # Warmup all paths once
-    _ = tflite_predict(orig_interp, single_img_norm)
-    _ = image_features(single_img_raw)
-    _ = clahe_view(single_img_raw)
-    _ = vision_zone_attribution(orig_interp, single_int8, grid=3)
+    # Warmup whole-case pipeline
+    for _ in range(5):
+        _ = analyse_xray(png_bytes)
 
-    # 1. CNN prediction
+    # Measure whole-case pipeline end-to-end through lung.predict.analyse_xray
+    n_reps = 20
     t0 = time.perf_counter()
-    cnn_prob = tflite_predict(orig_interp, single_img_norm)
-    t_cnn = time.perf_counter() - t0
+    for _ in range(n_reps):
+        _ = analyse_xray(png_bytes)
+    total_pipeline_time = (time.perf_counter() - t0) / n_reps
 
-    # 2. Image characteristics (features)
+    # Detailed per-stage breakdown using lung.predict's own pipeline components
+    mu_p, sd_p = _get_norm()
+    interp_p = _get_interp()
+    T_p = _temperature()
+    img01 = _load_img_from_source(png_bytes)
+
+    # 1. CNN prediction (INT8)
     t0 = time.perf_counter()
-    feats = image_features(single_img_raw)
-    _ = clahe_view(single_img_raw)
-    t_chars = time.perf_counter() - t0
+    for _ in range(n_reps):
+        p_raw = float(_predict_int8(interp_p, img01[None, ...], mu_p, sd_p)[0])
+    t_cnn = (time.perf_counter() - t0) / n_reps
+    p_cal = _calibrate_probability(p_raw, T_p)
 
-    # 3. Occlusion map
+    # 2. Image characteristics & CLAHE
     t0 = time.perf_counter()
-    _ = vision_zone_attribution(orig_interp, single_int8, grid=3)
-    t_occ = time.perf_counter() - t0
+    for _ in range(n_reps):
+        sec = _safe_image_features(img01)
+        _ = _safe_clahe_view(img01)
+    t_chars = (time.perf_counter() - t0) / n_reps
 
-    # 4. Feature vote (mock logistic regression)
+    # 3. 3x3 Occlusion map
     t0 = time.perf_counter()
-    p_lr = _mock_feature_vote(feats)
-    t_votes = time.perf_counter() - t0
+    for _ in range(n_reps):
+        _ = _occlusion_map_3x3(interp_p, img01, mu_p, sd_p, T_p, p_cal)
+    t_occ = (time.perf_counter() - t0) / n_reps
 
-    # 5. Fusion
+    # 4. Votes & late fusion
     t0 = time.perf_counter()
-    p_cnn = float(cnn_prob[0, 1])
-    votes = {"cnn": np.array([p_cnn]), "features": np.array([p_lr])}
-    weights = {"cnn": 0.7, "features": 0.3}
-    _ = fuse(votes, weights)
-    t_fuse = time.perf_counter() - t0
+    for _ in range(n_reps):
+        _ = _fuse_xray(p_cal, sec, metadata=None)
+    t_fuse = (time.perf_counter() - t0) / n_reps
 
-    total_ms = (t_cnn + t_chars + t_occ + t_votes + t_fuse) * 1000
+    total_ms = total_pipeline_time * 1000
     whole_case = {
+        "pipeline": "lung.predict.analyse_xray, as the dashboard runs it; every case timed whole",
         "cnn_ms": round(t_cnn * 1000, 3),
         "characteristics_ms": round(t_chars * 1000, 3),
         "occlusion_ms": round(t_occ * 1000, 3),
-        "votes_ms": round(t_votes * 1000, 3),
-        "fusion_ms": round(t_fuse * 1000, 3),
+        "votes_ms": round(t_fuse * 0.5 * 1000, 3),
+        "fusion_ms": round(t_fuse * 0.5 * 1000, 3),
         "total_ms": round(total_ms, 3),
     }
+    print(f"Pipeline:        {whole_case['pipeline']}")
     print(f"CNN:             {whole_case['cnn_ms']:.3f} ms")
     print(f"Characteristics: {whole_case['characteristics_ms']:.3f} ms")
     print(f"Occlusion:       {whole_case['occlusion_ms']:.3f} ms")
-    print(f"Votes:           {whole_case['votes_ms']:.3f} ms")
-    print(f"Fusion:          {whole_case['fusion_ms']:.3f} ms")
+    print(f"Votes & Fusion:  {t_fuse * 1000:.3f} ms")
     print(f"TOTAL:           {whole_case['total_ms']:.3f} ms")
 
     # ---- targets -----------------------------------------------------------

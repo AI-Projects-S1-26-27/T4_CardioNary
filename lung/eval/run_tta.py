@@ -121,6 +121,9 @@ def _evaluate_draw(
     )
     adaptation_seconds = time.perf_counter() - started
     adapted_probs = predict_float(adapted_model, X_shifted[evaluation_mask], mean, std)
+    del adapted_model
+    import gc
+    gc.collect()
 
     clean = _metrics(eval_ids, eval_y, clean_probs)
     plain = _metrics(eval_ids, eval_y, plain_probs)
