@@ -1,7 +1,7 @@
+# Public cloud demo (branch deploy-streamlit-cloud). The offline tool on main binds
+# to 127.0.0.1 on port 8501; here the host chooses the address and port.
 [server]
 headless = true
-address = "127.0.0.1"
-port = 8501
 enableXsrfProtection = true
 
 [browser]

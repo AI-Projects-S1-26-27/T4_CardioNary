@@ -52,6 +52,7 @@ I18N = {
     "en": {
         "title": "CardioNary: Multimodal Clinical Screening Station",
         "subtitle": "Offline Edge Triage Assistant • Version 2.0 (Heart & Lung Branches)",
+        "public_demo_note": "Public demo: use the built-in samples or other public data only. Never upload a real patient's recording or X-ray. Results are a demonstration, not a diagnosis.",
         "sidebar_header": "1. Patient Intake & Vitals",
         "patient_id": "Blinded Patient ID",
         "age": "Age (Years)",
@@ -126,6 +127,7 @@ I18N = {
     "hi": {
         "title": "कार्डियोनेरी: बहुविध नैदानिक स्क्रीनिंग स्टेशन",
         "subtitle": "ऑफ़लाइन एज ट्राइएज सहायक • संस्करण 2.0 (हृदय एवं फेफड़े प्रभाग)",
+        "public_demo_note": "सार्वजनिक डेमो: केवल दिए गए नमूने या अन्य सार्वजनिक डेटा का उपयोग करें। किसी वास्तविक मरीज़ की रिकॉर्डिंग या एक्स-रे कभी अपलोड न करें। परिणाम केवल प्रदर्शन के लिए हैं, निदान नहीं।",
         "sidebar_header": "1. रोगी विवरण एवं महत्वपूर्ण लक्षण",
         "patient_id": "गोपनीय रोगी पहचान (ID)",
         "age": "उम्र (वर्ष)",
@@ -312,6 +314,7 @@ def main():
     # App Title & Subtitle
     st.markdown(f'<div class="main-header">{t["title"]}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="main-sub">{t["subtitle"]}</div>', unsafe_allow_html=True)
+    st.info(t["public_demo_note"])   # this branch is the public cloud demo
 
     manifest = load_test_manifest()
 
