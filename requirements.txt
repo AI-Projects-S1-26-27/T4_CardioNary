@@ -15,10 +15,11 @@ keras==3.12.4
 # Images and figures
 pillow==11.3.0
 matplotlib==3.10.9
+opencv-python-headless==5.0.0.93   # CLAHE view of the X-ray branch (lung/model/clahe.py)
 
 # Tests
 pytest==9.1.1
 
-# Dashboard frontend
-streamlit==1.42.2
+# Dashboard frontend (the version the dashboard is tested with, as in lung/requirements-lung.txt)
+streamlit==1.65.0
 

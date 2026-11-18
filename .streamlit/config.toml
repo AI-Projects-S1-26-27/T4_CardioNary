@@ -3,13 +3,19 @@
 [server]
 headless = true
 enableXsrfProtection = true
+maxUploadSize = 20
 
 [browser]
 gatherUsageStats = false
 
+# The Chiron station's dark palette. No red anywhere: the accent is blue, and
+# Streamlit's own red (used for errors) is replaced by amber.
 [theme]
-primaryColor = "#0645ad"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f8f9fa"
-textColor = "#212529"
-font = "sans serif"
+base = "dark"
+primaryColor = "#2f81f7"
+backgroundColor = "#0d1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#e6edf3"
+borderColor = "#2a3038"
+redColor = "#d29922"
+font = "sans-serif"

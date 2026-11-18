@@ -142,24 +142,38 @@ def _load_img_from_source(source: Union[str, Path, bytes, io.BytesIO]) -> np.nda
     return arr
 
 
+XRAY_STAGES = ("load_image", "cnn_8bit", "secondary_characteristics", "occlusion_map", "votes_and_fusion")
+
+
 def analyse_xray(
     image: Union[str, Path, bytes, io.BytesIO],
     metadata: Optional[PatientMetadata] = None,
+    *,
+    on_stage=None,
 ) -> tuple[ModelOutput, FusedOutput, np.ndarray, np.ndarray]:
-    """Run X-ray inference; return model/fusion outputs, CLAHE and 3x3 occlusion map."""
+    """Run X-ray inference; return model/fusion outputs, CLAHE and 3x3 occlusion map.
+
+    on_stage, if given, is called with each name in XRAY_STAGES just before that
+    stage starts, so the dashboard can show which block of the architecture is running.
+    """
+    stage = on_stage or (lambda name: None)
+    stage("load_image")
     img01 = _load_img_from_source(image)
     mu, sd = _get_norm()
     interp = _get_interp()
 
     # Raw CNN prediction
+    stage("cnn_8bit")
     p_raw = float(_predict_int8(interp, img01[None, ...], mu, sd)[0])
 
     T = _temperature()
     p_cal = _calibrate_probability(p_raw, T)
 
     # Secondary characteristics & CLAHE
+    stage("secondary_characteristics")
     sec = _safe_image_features(img01)
     clahe_img = _safe_clahe_view(img01)
+    stage("occlusion_map")
     occlusion_map = _occlusion_map_3x3(interp, img01, mu, sd, T, p_cal)
 
     model_out = ModelOutput(
@@ -169,6 +183,7 @@ def analyse_xray(
         quality_ok=True,
     )
 
+    stage("votes_and_fusion")
     fused_out = _fuse_xray(p_cal, sec, metadata)
 
     return model_out, fused_out, clahe_img, occlusion_map

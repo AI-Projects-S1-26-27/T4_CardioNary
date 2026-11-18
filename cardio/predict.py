@@ -203,18 +203,25 @@ def _wav_source(recording):
 
 
 def analyse_heart(recording, metadata: PatientMetadata | None = None, *,
-                  model: FinalModel | None = None, complete: bool = False) -> HeartResult:
+                  model: FinalModel | None = None, complete: bool = False,
+                  on_stage=None) -> HeartResult:
     """Run one recording through every stage and return what the dashboard shows.
 
     complete=True carries on after a failed quality check, so the edge budget can time
     a whole case; the result is still marked as withheld.
+
+    on_stage, if given, is called with each name in STAGES just before that stage
+    starts, so the dashboard can show which block of the architecture is running.
+    It is called outside the stage timings and never while the model lock is held.
     """
     from cardio.model.features import characteristics_from_audio
     from core.quantize import tflite_predict
 
     res, clock = HeartResult(), time.perf_counter
     t = res.timings_ms
+    stage = on_stage or (lambda name: None)
 
+    stage("load_and_resample")
     t0 = clock()
     try:
         x8 = load_wav(_wav_source(recording), CARDIO_CONFIG)
@@ -224,6 +231,7 @@ def analyse_heart(recording, metadata: PatientMetadata | None = None, *,
     t["load_and_resample"] = (clock() - t0) * 1000
     res.audio_8k, res.seconds_of_audio = x8, len(x8) / FS
 
+    stage("quality_check")
     t0 = clock()
     res.quality = signal_provenance(res.pcm16())
     if len(x8) < MIN_SAMPLES:
@@ -234,6 +242,7 @@ def analyse_heart(recording, metadata: PatientMetadata | None = None, *,
     if res.withheld == "too_short" or (res.withheld and not complete):
         return res
 
+    stage("front_end")
     t0 = clock()
     windows = [extract(w, CARDIO_CONFIG) for w in iter_windows(preprocess(x8, CARDIO_CONFIG), CARDIO_CONFIG, 0.5)]
     feats = np.stack(windows).astype(np.float32)   # exactly as core.features.features_for_file
@@ -241,6 +250,7 @@ def analyse_heart(recording, metadata: PatientMetadata | None = None, *,
     res.windows = len(feats)
 
     model = model or load_model()
+    stage("cnn_8bit")
     t0 = clock()
     with _LOCK:
         p_windows = tflite_predict(model.interp, model.normalise(feats))
@@ -248,11 +258,13 @@ def analyse_heart(recording, metadata: PatientMetadata | None = None, *,
     probs = calibrate(p_windows.mean(axis=0), res.temperature)
     t["cnn_8bit"] = (clock() - t0) * 1000
 
+    stage("secondary_characteristics")
     t0 = clock()
     ch = characteristics_from_audio(x8)
     t["secondary_characteristics"] = (clock() - t0) * 1000
     res.characteristics = ch
 
+    stage("systole_or_diastole")
     t0 = clock()
     res.systole_or_diastole = systole_or_diastole(ch)
     t["systole_or_diastole"] = (clock() - t0) * 1000
@@ -262,6 +274,7 @@ def analyse_heart(recording, metadata: PatientMetadata | None = None, *,
         secondary={k: float(v) for k, v in ch.items() if v is not None and math.isfinite(v)},
         quality_ok=res.withheld is None)
 
+    stage("votes_and_fusion")
     t0 = clock()
     p_cnn = float(np.clip(1.0 - res.model_output.probabilities["Normal"], 0.0, 1.0))
     fuse = fusion_function()

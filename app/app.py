@@ -1,690 +1,776 @@
-"""CardioNary: Multimodal Clinical Screening Dashboard (Streamlit Edge Frontend).
+"""CardioNary dashboard, in the layout of the Chiron screening station.
 
-Integrates phonocardiogram heart sound auscultation, chest radiography (X-ray),
-and clinical patient metadata through strict core.contracts interfaces.
-Strict adherence to the 'NO RED' clinical safety rule.
-Bilingual support: English and Hindi (हिंदी).
-
-Run offline:
     streamlit run app/app.py
+
+Ported from the Chiron gateway (gateway/static): the header with language and
+screening batch, the two node cards with case navigation, verdict, probability
+bars, media, timing line and reporting threshold, the batch accuracy cards, the
+confidence history, the case log with CSV export, and the case-detail sections
+with Chiron's clinical reference text.
+
+CardioNary adds the patient details, late fusion, one decision per visit and the
+architecture of the team's report, drawn live: each block lights up while its
+stage of cardio.predict.analyse_heart or lung.predict.analyse_xray runs, and at
+rest the diagram marks where the user is.
+
+The reference cases are public held-out data (Test_Data, fold 0 of both models).
+Nothing is written to disk; the case log lives in the browser session.
 """
 
 from __future__ import annotations
 
+import csv
 import io
 import json
-import math
-from pathlib import Path
+import os
 import sys
-from typing import Optional
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 
-# Ensure repository root is on sys.path so core, cardio, and lung can be imported
-# when run via `streamlit run app/app.py`
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+APP_DIR = Path(__file__).resolve().parent
+REPO_ROOT = APP_DIR.parent
+for _p in (str(REPO_ROOT), str(APP_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import streamlit as st
-from PIL import Image
 
-# Core contracts and pipeline calls
-from core.contracts import (
-    CLASSES,
-    FusedOutput,
-    ModelOutput,
-    PatientMetadata,
-    SYMPTOMS,
-    VisitDecision,
-)
+import dashboard_ui as ui
+from dashboard_text import LANGS, class_name, clinical, tr
+from core.contracts import SYMPTOMS, PatientMetadata, VisitDecision
 from cardio.predict import analyse_heart
 from lung.predict import analyse_xray
-TEST_DATA_DIR = REPO_ROOT / "Test_Data"
 
-# ---------------------------------------------------------------------------
-# Bilingual Dictionary (English & Hindi)
-# ---------------------------------------------------------------------------
-I18N = {
-    "en": {
-        "title": "CardioNary: Multimodal Clinical Screening Station",
-        "subtitle": "Offline Edge Triage Assistant • Version 2.0 (Heart & Lung Branches)",
-        "public_demo_note": "Public demo: use the built-in samples or other public data only. Never upload a real patient's recording or X-ray. Results are a demonstration, not a diagnosis.",
-        "sidebar_header": "1. Patient Intake & Vitals",
-        "patient_id": "Blinded Patient ID",
-        "age": "Age (Years)",
-        "sex": "Biological Sex",
-        "sex_female": "Female",
-        "sex_male": "Male",
-        "height": "Height (cm)",
-        "weight": "Weight (kg)",
-        "pregnant": "Pregnancy Status",
-        "symptoms": "Reported Symptoms",
-        "symp_breathless": "Breathlessness",
-        "symp_chest_pain": "Chest Pain",
-        "symp_cough": "Cough",
-        "symp_fever": "Fever",
-        "ops_header": "Operational Settings",
-        "cost_ratio": "Clinical Cost Ratio (C_miss / C_refer)",
-        "cost_ratio_help": "Higher ratio increases sensitivity to minimise missed clinical abnormalities.",
-        "threshold_label": "Effective Referral Threshold (τ)",
-        "sample_header": "Quick Test Samples",
-        "load_heart_sample": "Select Sample Heart Sound",
-        "load_lung_sample": "Select Sample Chest X-Ray",
-        "tab_heart": "Heart Sound Auscultation",
-        "tab_lung": "Chest Radiography (X-Ray)",
-        "heart_upload_label": "Upload Digital Stethoscope Recording (.wav)",
-        "heart_player_label": "Auscultation Playback",
-        "lung_upload_label": "Upload Chest Radiograph (.png, .jpg, .jpeg)",
-        "run_btn": "Run Comprehensive Screening Analysis",
-        "no_data_warn": "Please provide at least one diagnostic test (Heart Sound or Chest X-Ray) to evaluate.",
-        "analyzing": "Running inference through calibrated late-fusion pipeline...",
-        "findings_header": "Diagnostic Screening Findings",
-        "decision_refer": "Secondary Referral Recommended",
-        "decision_refer_desc": "The combined abnormality probability of {p_any:.1%} exceeds the operational threshold of {tau:.1%} (Cost Ratio {cost_ratio:.1f}:1). Advised action: Refer patient for secondary evaluation at specialist clinic.",
-        "decision_routine": "Routine Finding / Low Risk",
-        "decision_routine_desc": "The combined abnormality probability of {p_any:.1%} is within normal parameters below threshold ({tau:.1%}). Advised action: Continue standard community health follow-up.",
-        "heart_eval_header": "Heart Auscultation Evaluation",
-        "lung_eval_header": "Chest Radiography Evaluation",
-        "calibrated_prob": "Calibrated Abnormality Probability",
-        "top_categories": "Condition Probabilities",
-        "biomarkers_header": "Acoustic Biomarkers",
-        "heart_rate": "Estimated Heart Rate",
-        "murmur_timing": "Murmur Phase Attribution",
-        "systole": "Systolic Murmur Detected",
-        "diastole": "Diastolic Murmur Detected",
-        "neither": "No Pathological Murmur Timing",
-        "unknown_phase": "Heart Cycles Indeterminate",
-        "segmentation_status": "Cycle Segmentation",
-        "segmentation_ok": "Satisfactory (S1/S2 distinct)",
-        "segmentation_fail": "Low confidence / noisy cycles",
-        "energy_check": "High-Frequency Noise Check",
-        "withheld_warn": "Heart result withheld: {reason}",
-        "reason_too_short": "Audio clip is too short (minimum 1.5 s required)",
-        "reason_unreadable": "Audio file format cannot be decoded",
-        "reason_quality_check": "Excess high-frequency acoustic noise detected (>1 kHz threshold)",
-        "no_usable_test": "No visit decision: no test gave a usable result. See the reason below, then record or capture again.",
-        "fusion_breakdown": "Late Fusion Vote Composition",
-        "vote_cnn": "CNN Deep Learning Vote",
-        "vote_features": "Secondary Features Vote",
-        "vote_metadata": "Patient Demographics Vote",
-        "weight_label": "weight",
-        "texture_biomarkers": "Radiological Texture Biomarkers",
-        "characteristics_header": "Image Characteristics",
-        "fusion_fallback": "Fitted image-feature and patient-metadata vote parameters are not available; this result uses the calibrated CNN vote only.",
-        "dense_area": "Dense Parenchymal Area",
-        "asymmetry": "Hemithorax Asymmetry Index",
-        "heterogeneity": "Texture Heterogeneity",
-        "clahe_label": "Contrast-Enhanced (CLAHE) View",
-        "occlusion_label": "3 × 3 Occlusion Map (probability drop)",
-        "original_img_label": "Original Film",
-        "export_btn": "Export Clinical Triage Summary (JSON)",
-        "reset_btn": "Start Next Patient (Clear Form)",
-    },
-    "hi": {
-        "title": "कार्डियोनेरी: बहुविध नैदानिक स्क्रीनिंग स्टेशन",
-        "subtitle": "ऑफ़लाइन एज ट्राइएज सहायक • संस्करण 2.0 (हृदय एवं फेफड़े प्रभाग)",
-        "public_demo_note": "सार्वजनिक डेमो: केवल दिए गए नमूने या अन्य सार्वजनिक डेटा का उपयोग करें। किसी वास्तविक मरीज़ की रिकॉर्डिंग या एक्स-रे कभी अपलोड न करें। परिणाम केवल प्रदर्शन के लिए हैं, निदान नहीं।",
-        "sidebar_header": "1. रोगी विवरण एवं महत्वपूर्ण लक्षण",
-        "patient_id": "गोपनीय रोगी पहचान (ID)",
-        "age": "उम्र (वर्ष)",
-        "sex": "लिंग",
-        "sex_female": "महिला",
-        "sex_male": "पुरुष",
-        "height": "ऊंचाई (सेमी)",
-        "weight": "वजन (किग्रा)",
-        "pregnant": "गर्भावस्था स्थिति",
-        "symptoms": "दर्ज लक्षण",
-        "symp_breathless": "सांस फूलना (Breathlessness)",
-        "symp_chest_pain": "छाती में दर्द (Chest Pain)",
-        "symp_cough": "खांसी (Cough)",
-        "symp_fever": "बुखार (Fever)",
-        "ops_header": "संचालन सेटिंग्स (सीमा स्तर)",
-        "cost_ratio": "नैदानिक लागत अनुपात (C_miss / C_refer)",
-        "cost_ratio_help": "अनुपात बढ़ाने से संवेदनशीलता बढ़ती है ताकि संभावित विकृति न छूटे।",
-        "threshold_label": "प्रभावी रेफरल सीमा (τ)",
-        "sample_header": "त्वरित परीक्षण नमूने",
-        "load_heart_sample": "नमूना हृदय ध्वनि चुनें",
-        "load_lung_sample": "नमूना छाती एक्स-रे चुनें",
-        "tab_heart": "हृदय ध्वनि ऑस्कल्टेशन",
-        "tab_lung": "छाती का एक्स-रे (रेडियोग्राफी)",
-        "heart_upload_label": "डिजिटल स्टेथोस्कोप रिकॉर्डिंग (.wav) अपलोड करें",
-        "heart_player_label": "ऑडियो प्लेबैक",
-        "lung_upload_label": "छाती का एक्स-रे (.png, .jpg) अपलोड करें",
-        "run_btn": "विस्तृत स्क्रीनिंग विश्लेषण चलाएं",
-        "no_data_warn": "कृपया मूल्यांकन के लिए कम से कम एक नैदानिक परीक्षण (हृदय ध्वनि या एक्स-रे) प्रदान करें।",
-        "analyzing": "कैलिब्रेटेड लेट-फ्यूजन पाइपलाइन के माध्यम से विश्लेषण जारी है...",
-        "findings_header": "नैदानिक स्क्रीनिंग परिणाम",
-        "decision_refer": "द्वितीयक विशेषज्ञ परामर्श की अनुशंसा (रेफरल)",
-        "decision_refer_desc": "कुल असामान्य संभावना {p_any:.1%} निर्धारित सीमा {tau:.1%} से अधिक है (लागत अनुपात {cost_ratio:.1f}:1)। सलाह: रोगी को विशेषज्ञ अस्पताल में द्वितीयक जांच के लिए रेफर करें।",
-        "decision_routine": "सामान्य स्थिति / कम जोखिम",
-        "decision_routine_desc": "कुल असामान्य संभावना {p_any:.1%} सामान्य सीमा ({tau:.1%}) के अंतर्गत है। सलाह: नियमित सामुदायिक स्वास्थ्य निगरानी जारी रखें।",
-        "heart_eval_header": "हृदय ध्वनि मूल्यांकन",
-        "lung_eval_header": "छाती एक्स-रे मूल्यांकन",
-        "calibrated_prob": "कैलिब्रेटेड असामान्यता संभावना",
-        "top_categories": "रोग श्रेणीवार संभावनाएं",
-        "biomarkers_header": "ध्वनि बायोमार्कर्स (लक्षण)",
-        "heart_rate": "अनुमानित हृदय गति (HR)",
-        "murmur_timing": "मर्मर चरण (समय)",
-        "systole": "सिस्टोलिक मर्मर पाया गया",
-        "diastole": "डायस्टोलिक मर्मर पाया गया",
-        "neither": "कोई असामान्य मर्मर नहीं",
-        "unknown_phase": "हृदय चक्र अस्पष्ट",
-        "segmentation_status": "चक्र विभाजन (S1/S2)",
-        "segmentation_ok": "संतोषजनक (स्पष्ट चक्र)",
-        "segmentation_fail": "शोरगुल / अस्पष्ट चक्र",
-        "energy_check": "उच्च आवृत्ति शोर परीक्षण",
-        "withheld_warn": "हृदय परिणाम रोका गया: {reason}",
-        "reason_too_short": "ऑडियो क्लिप बहुत छोटी है (न्यूनतम 1.5 सेकंड आवश्यक)",
-        "reason_unreadable": "ऑडियो फ़ाइल डिकोड नहीं की जा सकी",
-        "reason_quality_check": "उच्च आवृत्ति का अत्यधिक शोर पाया गया (>1 kHz)",
-        "no_usable_test": "कोई निर्णय नहीं: किसी भी जांच से उपयोगी परिणाम नहीं मिला। नीचे कारण देखें, फिर दोबारा रिकॉर्ड करें।",
-        "fusion_breakdown": "लेट फ्यूजन वोट वितरण",
-        "vote_cnn": "CNN डीप लर्निंग वोट",
-        "vote_features": "ध्वनिक लक्षण (Features) वोट",
-        "vote_metadata": "रोगी जनसांख्यिकी वोट",
-        "weight_label": "भार (Weight)",
-        "texture_biomarkers": "एक्स-रे बनावट बायोमार्कर्स",
-        "characteristics_header": "छवि की विशेषताएँ",
-        "fusion_fallback": "फीचर और रोगी-मेटाडेटा वोट के प्रशिक्षित पैरामीटर उपलब्ध नहीं हैं; यह परिणाम केवल कैलिब्रेटेड CNN वोट पर आधारित है।",
-        "dense_area": "घना पैरेन्काइमल क्षेत्र",
-        "asymmetry": "हेमिथोरेक्स विषमता सूचकांक",
-        "heterogeneity": "बनावट विषमता (Heterogeneity)",
-        "clahe_label": "कंट्रास्ट-संवर्धित (CLAHE) दृश्य",
-        "occlusion_label": "3 × 3 ऑक्लूज़न मानचित्र (संभाव्यता में कमी)",
-        "original_img_label": "मूल एक्स-रे छवि",
-        "export_btn": "नैदानिक ट्राइएज सारांश डाउनलोड करें (JSON)",
-        "reset_btn": "नया रोगी प्रारंभ करें (फ़ॉर्म साफ़ करें)",
-    },
+TEST_DATA = REPO_ROOT / "Test_Data"
+REPORTS = REPO_ROOT / "reports"
+MODELS = REPO_ROOT / "models"
+HOLD = float(os.environ.get("CARDIONARY_STAGE_HOLD", "0.22"))   # seconds each stage stays lit
+BRANCHES = ("heart", "xray")
+MANIFEST_KEY = {"heart": "cardio", "xray": "pulmo"}
+MAX_RECORDS = 2000
+FOCUS = {   # where the user is -> blocks to mark, caption
+    "start": (("heart_audio", "metadata", "xray"), "cap_start"),
+    "heart": (("heart_audio",), "cap_heart"),
+    "xray": (("xray",), "cap_xray"),
+    "meta": (("metadata", "meta_classifier"), "cap_meta"),
+    "decision": (("decision",), "cap_decision"),
+    "done": (("decision", "report"), "cap_done"),
+    "heart_done": (("heart_fusion",), "cap_branch_done"),
+    "xray_done": (("xray_fusion",), "cap_branch_done"),
+    "batch_done": ((), "cap_batch_done"),
 }
 
+
 # ---------------------------------------------------------------------------
-# UI Theme & Styling (Strictly NO RED)
+# Data that does not change while the app runs
 # ---------------------------------------------------------------------------
-def apply_custom_styles():
-    st.markdown("""
-    <style>
-        /* Modern clinical styling */
-        .main-header {
-            font-size: 2.1rem;
-            font-weight: 700;
-            color: #1a365d;
-            margin-bottom: 4px;
-        }
-        .main-sub {
-            font-size: 1.05rem;
-            color: #4a5568;
-            margin-bottom: 20px;
-        }
-        /* Metric card */
-        .clinical-card {
-            background-color: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-left: 5px solid #2b5c8f;
-            border-radius: 8px;
-            padding: 14px 18px;
-            margin-bottom: 14px;
-        }
-        /* Referral Box: Warm Amber (NO RED) */
-        .refer-box-caution {
-            background-color: #fff8e1;
-            border: 2px solid #ffd54f;
-            border-radius: 10px;
-            padding: 20px 24px;
-            color: #8c5b00;
-            margin-bottom: 20px;
-        }
-        /* Routine Box: Soft Green */
-        .refer-box-normal {
-            background-color: #e8f5e9;
-            border: 2px solid #81c784;
-            border-radius: 10px;
-            padding: 20px 24px;
-            color: #1b5e20;
-            margin-bottom: 20px;
-        }
-        /* Biomarker badge */
-        .bio-badge {
-            background-color: #e2e8f0;
-            color: #1e293b;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.88rem;
-            font-weight: 600;
-            display: inline-block;
-            margin-right: 6px;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+@st.cache_data(show_spinner=False)
+def manifest() -> dict:
+    """The reference cases of Test_Data/index.json, per branch."""
+    path = TEST_DATA / "index.json"
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return {b: data.get(MANIFEST_KEY[b], {}).get("items", []) for b in BRANCHES}
 
 
-def plot_waveform(signal: np.ndarray, fs: int = 8000) -> plt.Figure:
-    """Waveform envelope plot in clinical slate blue."""
-    fig, ax = plt.subplots(figsize=(7.5, 2.0), dpi=100)
-    t = np.linspace(0, len(signal) / fs, len(signal))
-    ax.plot(t, signal, color="#2b5c8f", lw=0.7)
-    ax.set_xlabel("Time (s)", fontsize=8)
-    ax.set_ylabel("Amplitude", fontsize=8)
-    ax.set_title("Phonocardiogram (PCG) Envelope", fontsize=9, fontweight="bold", color="#1e293b")
-    ax.grid(True, linestyle="--", alpha=0.4)
-    ax.tick_params(axis="both", labelsize=7)
-    fig.tight_layout()
-    return fig
-
-
-def load_test_manifest() -> dict:
-    """Reads Test_Data/index.json if available to populate test samples."""
-    index_file = TEST_DATA_DIR / "index.json"
-    if index_file.exists():
+@st.cache_data(show_spinner=False)
+def reference_info() -> dict:
+    """Model sizes and accuracies, read from the committed reports."""
+    def load(name):
         try:
-            return json.loads(index_file.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"cardio": {"items": []}, "pulmo": {"items": []}}
+            return json.loads((REPORTS / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    qh, cv, qx = (load("quantization_chiron_cardio_v1.json"), load("heart_cv_yaseen.json"),
+                  load("quantization_chiron_pulmo_v1.json"))
+    return {"bytes": {"heart": qh.get("tflite_bytes"), "xray": qx.get("tflite_bytes")},
+            "heart_acc": qh.get("int8_acc"), "heart_cv": cv.get("accuracy_mean"),
+            "xray_acc": qx.get("int8_acc"), "xray_pacc": qx.get("int8_patient_acc")}
+
+
+@st.cache_data(show_spinner=False)
+def file_bytes(path: str) -> bytes:
+    return Path(path).read_bytes()
+
+
+def reference_lines(lang: str) -> dict:
+    r = reference_info()
+    return {"heart": tr(lang, "ref_heart", acc=ui.pct(r["heart_acc"]), cv=ui.pct(r["heart_cv"])),
+            "xray": tr(lang, "ref_xray", acc=ui.pct(r["xray_acc"]), pacc=ui.pct(r["xray_pacc"]))}
+
+
+def branch_label(lang: str, b: str) -> str:
+    return tr(lang, "cardiac" if b == "heart" else "pulmonary")
 
 
 # ---------------------------------------------------------------------------
-# Main Application
+# What is on the page now
 # ---------------------------------------------------------------------------
-def main():
-    st.set_page_config(
-        page_title="CardioNary | Multimodal Screening",
-        page_icon="🩺",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-    apply_custom_styles()
+def init_state() -> None:
+    ss = st.session_state
+    for key, value in (("idx_heart", 0), ("idx_xray", 0), ("results", {"heart": None, "xray": None}),
+                       ("pending", []), ("focus", "start"), ("records", []), ("seq", 0)):
+        if key not in ss:
+            ss[key] = value
 
-    # Session State initialisation
-    if "sample_audio_path" not in st.session_state:
-        st.session_state.sample_audio_path = None
-    if "sample_image_path" not in st.session_state:
-        st.session_state.sample_image_path = None
 
-    # Language toggle in sidebar
-    with st.sidebar:
-        st.markdown("### 🌐 Language / भाषा")
-        lang_choice = st.radio("Select Language / भाषा चुनें", ["English", "हिंदी"], horizontal=True, label_visibility="collapsed")
-        lang = "en" if lang_choice == "English" else "hi"
-        t = I18N[lang]
+def current_input(b: str) -> dict:
+    """The input of one card: a reference case, an upload, or nothing yet."""
+    ss = st.session_state
+    items = manifest()[b]
+    if ss.get(f"srcv_{b}", "reference") == "upload":
+        up = ss.get(f"up_{b}")
+        if up is None:
+            return {"kind": "upload", "waiting": True, "sig": ("upload", None)}
+        fid = getattr(up, "file_id", None) or f"{up.name}:{up.size}"
+        return {"kind": "upload", "waiting": False, "file": up, "name": up.name, "sig": ("upload", fid)}
+    if not items:
+        return {"kind": "reference", "waiting": True, "sig": ("reference", None)}
+    idx = ss.get(f"idx_{b}", 0) % len(items)
+    item = items[idx]
+    return {"kind": "reference", "waiting": False, "idx": idx, "item": item, "path": TEST_DATA / item["file"],
+            "name": item.get("source_file") or item["file"], "sig": ("reference", idx)}
 
-    # App Title & Subtitle
-    st.markdown(f'<div class="main-header">{t["title"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="main-sub">{t["subtitle"]}</div>', unsafe_allow_html=True)
-    st.info(t["public_demo_note"])   # this branch is the public cloud demo
 
-    manifest = load_test_manifest()
+def current_metadata() -> PatientMetadata | None:
+    """The patient details as entered; None when nothing was recorded, so no vote is made up."""
+    ss = st.session_state
+    symptoms = frozenset(s for s in (ss.get("meta_symp") or []) if s in SYMPTOMS)
+    sex, pregnant = ss.get("meta_sex"), ss.get("meta_preg")
+    values = dict(age_years=ss.get("m_age"), sex=sex if sex in ("female", "male") else None,
+                  height_cm=ss.get("m_height"), weight_kg=ss.get("m_weight"),
+                  pregnant=pregnant if isinstance(pregnant, bool) else None)
+    if all(v is None for v in values.values()) and not symptoms:
+        return None
+    return PatientMetadata(**values, symptoms=symptoms)
 
-    # -----------------------------------------------------------------------
-    # Sidebar: Patient Metadata & Operations
-    # -----------------------------------------------------------------------
-    with st.sidebar:
-        st.markdown(f"### {t['sidebar_header']}")
-        anon_id = st.text_input(t["patient_id"], value="PT-2026-0816")
 
-        c1, c2 = st.columns(2)
-        with c1:
-            age = st.number_input(t["age"], min_value=0.0, max_value=120.0, value=12.0, step=1.0)
-            height = st.number_input(t["height"], min_value=20.0, max_value=250.0, value=135.0, step=1.0)
-        with c2:
-            sex_choice = st.selectbox(t["sex"], options=["female", "male"], format_func=lambda s: t["sex_female"] if s == "female" else t["sex_male"])
-            weight = st.number_input(t["weight"], min_value=1.0, max_value=300.0, value=32.0, step=0.5)
+def meta_signature(meta: PatientMetadata | None):
+    if meta is None:
+        return None
+    return (meta.age_years, meta.sex, meta.height_cm, meta.weight_kg, meta.pregnant, tuple(sorted(meta.symptoms)))
 
-        pregnant = st.checkbox(t["pregnant"], value=False)
 
-        st.markdown(f"**{t['symptoms']}**")
-        symp_breathless = st.checkbox(t["symp_breathless"])
-        symp_chest_pain = st.checkbox(t["symp_chest_pain"])
-        symp_cough = st.checkbox(t["symp_cough"])
-        symp_fever = st.checkbox(t["symp_fever"])
+def current_result(b: str, inp: dict) -> dict | None:
+    r = st.session_state.results.get(b)
+    return r if r is not None and r.get("input_sig") == inp["sig"] else None
 
-        symptoms = set()
-        if symp_breathless: symptoms.add("breathlessness")
-        if symp_chest_pain: symptoms.add("chest_pain")
-        if symp_cough: symptoms.add("cough")
-        if symp_fever: symptoms.add("fever")
 
-        patient_meta = PatientMetadata(
-            age_years=float(age),
-            sex=sex_choice,
-            height_cm=float(height),
-            weight_kg=float(weight),
-            pregnant=bool(pregnant),
-            symptoms=frozenset(symptoms),
-        )
+def visit_summary(results_now: dict, meta_sig) -> dict:
+    """One decision per visit from the included cards: p = 1 - prod(1 - p_branch)."""
+    ss = st.session_state
+    status, p, stale = {}, {}, False
+    for b in BRANCHES:
+        r = results_now[b]
+        if not ss.get(f"inc_{b}", True):
+            status[b] = "excluded"
+            continue
+        if r is None:
+            status[b] = "missing"
+            continue
+        status[b] = "error" if r.get("error") else "withheld" if r.get("withheld") else "ok"
+        if status[b] == "ok":
+            p[b] = float(r["p"])
+        stale = stale or r.get("meta_sig") != meta_sig
+    included = [b for b in BRANCHES if status[b] != "excluded"]
+    if not included:
+        state = "no_tests"
+    elif any(status[b] == "missing" for b in included):
+        state = "pending"
+    elif not p:
+        state = "none"
+    else:
+        state = "made"
+    p_any = None
+    if state == "made":
+        p_any = 1.0 - float(np.prod([1.0 - v for v in p.values()]))
+    return {"status": status, "p": p, "p_any": p_any, "state": state, "stale": stale}
 
-        st.divider()
-        st.markdown(f"### {t['ops_header']}")
-        cost_ratio = st.slider(
-            t["cost_ratio"],
-            min_value=1.0,
-            max_value=10.0,
-            value=4.0,
-            step=0.5,
-            help=t["cost_ratio_help"],
-        )
-        threshold = 1.0 / (1.0 + cost_ratio)
-        st.markdown(f"{t['threshold_label']}: **{threshold:.3f}**")
 
-        st.divider()
-        st.markdown(f"### {t['sample_header']}")
+def arch_view(inputs: dict, results_now: dict, meta, visit: dict) -> dict:
+    ss = st.session_state
+    view = {b: {"included": ss.get(f"inc_{b}", True), "waiting": inputs[b]["waiting"], "result": results_now[b]}
+            for b in BRANCHES}
+    view.update(metadata=meta is not None, decision={"made": "made", "none": "none"}.get(visit["state"]))
+    return view
 
-        # Sample Heart Audio selector
-        cardio_items = manifest.get("cardio", {}).get("items", [])
-        if cardio_items:
-            sample_options_heart = ["None / Custom Upload"] + [
-                f"{item.get('vector_id', i)}: {item.get('ground_truth', 'sample')} ({item.get('file', '')})"
-                for i, item in enumerate(cardio_items[:15])
-            ]
-            chosen_heart = st.selectbox(t["load_heart_sample"], sample_options_heart)
-            if chosen_heart != "None / Custom Upload":
-                idx = int(chosen_heart.split(":")[0])
-                st.session_state.sample_audio_path = str(TEST_DATA_DIR / cardio_items[idx]["file"])
-            else:
-                st.session_state.sample_audio_path = None
 
-        # Sample Pulmo Image selector
-        pulmo_items = manifest.get("pulmo", {}).get("items", [])
-        if pulmo_items:
-            sample_options_pulmo = ["None / Custom Upload"] + [
-                f"{item.get('vector_id', i)}: {item.get('ground_truth', 'sample')} ({item.get('file', '')})"
-                for i, item in enumerate(pulmo_items[:15])
-            ]
-            chosen_pulmo = st.selectbox(t["load_lung_sample"], sample_options_pulmo)
-            if chosen_pulmo != "None / Custom Upload":
-                idx = int(chosen_pulmo.split(":")[0])
-                st.session_state.sample_image_path = str(TEST_DATA_DIR / pulmo_items[idx]["file"])
-            else:
-                st.session_state.sample_image_path = None
+def focus_and_caption(lang: str, inputs: dict):
+    f = st.session_state.focus
+    blocks, key = FOCUS.get(f, FOCUS["start"])
+    if f in BRANCHES and inputs[f]["waiting"]:
+        text = tr(lang, "cap_wait_upload", branch=branch_label(lang, f))
+    elif f in ("heart_done", "xray_done"):
+        text = tr(lang, key, branch=branch_label(lang, f.split("_")[0]))
+    else:
+        text = tr(lang, key)
+    return blocks, ui.esc(text)
 
-        if st.button(t["reset_btn"], use_container_width=True):
-            st.session_state.sample_audio_path = None
-            st.session_state.sample_image_path = None
-            st.rerun()
 
-    # -----------------------------------------------------------------------
-    # Main Tabs: Diagnostics Input
-    # -----------------------------------------------------------------------
-    tab_heart, tab_lung = st.tabs([f"🫀 {t['tab_heart']}", f"🫁 {t['tab_lung']}"])
+# ---------------------------------------------------------------------------
+# Callbacks: they only record what to do; the work runs at the end of the script
+# ---------------------------------------------------------------------------
+def queue(action: str, focus: str | None = None) -> None:
+    ss = st.session_state
+    if action not in ss.pending:
+        ss.pending.append(action)
+    if focus:
+        ss.focus = focus
 
-    audio_source = None
-    with tab_heart:
-        st.markdown(f"#### {t['tab_heart']}")
-        c_up, c_aud = st.columns([1.5, 1])
 
-        with c_up:
-            up_wav = st.file_uploader(t["heart_upload_label"], type=["wav"])
-            if up_wav is not None:
-                audio_source = up_wav
-            elif st.session_state.sample_audio_path:
-                st.info(f"Loaded Sample: `{Path(st.session_state.sample_audio_path).name}`")
-                audio_source = st.session_state.sample_audio_path
+def set_focus(focus: str) -> None:
+    st.session_state.focus = focus
 
-        with c_aud:
-            if audio_source is not None:
-                st.markdown(f"**{t['heart_player_label']}**")
-                if isinstance(audio_source, str):
-                    st.audio(audio_source, format="audio/wav")
-                else:
-                    audio_source.seek(0)
-                    st.audio(audio_source, format="audio/wav")
-                    audio_source.seek(0)
 
-    image_source = None
-    with tab_lung:
-        st.markdown(f"#### {t['tab_lung']}")
-        c_img_up, c_prev = st.columns([1.5, 1])
+def step(b: str, delta: int) -> None:
+    """Chiron's case navigation: stepping to a case analyses it."""
+    n = len(manifest()[b]) or 1
+    st.session_state[f"idx_{b}"] = (st.session_state.get(f"idx_{b}", 0) + delta) % n
+    queue(b, focus=b)
 
-        with c_img_up:
-            up_img = st.file_uploader(t["lung_upload_label"], type=["png", "jpg", "jpeg", "dcm"])
-            if up_img is not None:
-                image_source = up_img
-            elif st.session_state.sample_image_path:
-                st.info(f"Loaded Sample: `{Path(st.session_state.sample_image_path).name}`")
-                image_source = st.session_state.sample_image_path
 
-        with c_prev:
-            if image_source is not None:
-                st.image(image_source, width=220, caption=t["original_img_label"])
+def remember(canon_key: str, widget_key: str, focus: str) -> None:
+    """Keep a choice in a language-independent key.
 
-    # -----------------------------------------------------------------------
-    # Action Button: Run Analysis
-    # -----------------------------------------------------------------------
-    st.write("")
-    analyze_btn = st.button(f"🔍 {t['run_btn']}", type="primary", use_container_width=True)
+    Streamlit 1.65 stores selectbox, radio and multiselect values as their displayed
+    labels, which change with the language. These widgets therefore carry the
+    language in their key, and the choice itself lives in canon_key, which seeds
+    the widget again after a language switch.
+    """
+    st.session_state[canon_key] = st.session_state.get(widget_key)
+    st.session_state.focus = focus
 
-    if analyze_btn:
-        if audio_source is None and image_source is None:
-            st.warning(t["no_data_warn"])
-            return
 
-        with st.spinner(t["analyzing"]):
-            heart_res = None
-            lung_res = None
-            p_heart = None
-            p_xray = None
+def on_source(b: str, widget_key: str) -> None:
+    ss = st.session_state
+    remember(f"srcv_{b}", widget_key, b)
+    if ss.get(f"srcv_{b}") == "reference" or ss.get(f"up_{b}") is not None:
+        queue(b)
 
-            # 1. Process Heart Sound
-            if audio_source is not None:
-                try:
-                    heart_res = analyse_heart(audio_source, patient_meta)
-                    if heart_res.fused is not None:
-                        p_heart = heart_res.fused.p_abnormal
-                except Exception as exc:
-                    st.warning(f"Heart analysis note: {exc}")
 
-            # 2. Process Chest X-Ray
-            clahe_preview = None
-            occlusion_preview = None
-            if image_source is not None:
-                try:
-                    lung_model_out, lung_fused_out, clahe_preview, occlusion_preview = analyse_xray(
-                        image_source, patient_meta
-                    )
-                    lung_res = (lung_model_out, lung_fused_out)
-                    p_xray = lung_fused_out.p_abnormal
-                except Exception as exc:
-                    st.warning(f"X-ray analysis note: {exc}")
+def on_upload(b: str) -> None:
+    st.session_state.focus = b
+    if st.session_state.get(f"up_{b}") is not None:
+        queue(b)
 
-            # 3. Compute Joint Visit Decision. A VisitDecision needs at least one
-            # usable test; a withheld heart result with no X-ray gives none.
-            decision = None
-            if p_heart is not None or p_xray is not None:
-                if p_heart is not None and p_xray is not None:
-                    p_any = float(1.0 - (1.0 - p_heart) * (1.0 - p_xray))
-                elif p_heart is not None:
-                    p_any = float(p_heart)
-                else:
-                    p_any = float(p_xray)
-                decision = VisitDecision(
-                    refer=bool(p_any >= threshold),
-                    p_any=p_any,
-                    cost_ratio=float(cost_ratio),
-                    p_heart=p_heart,
-                    p_xray=p_xray,
-                )
 
-        # -------------------------------------------------------------------
-        # Presentation of Results: Unified Decision Card
-        # -------------------------------------------------------------------
-        st.markdown(f"### {t['findings_header']}")
+def clear_records() -> None:
+    st.session_state.records = []
 
-        if decision is None:
-            st.info(t["no_usable_test"])
-        elif decision.refer:
-            msg = t["decision_refer_desc"].format(p_any=decision.p_any, tau=threshold, cost_ratio=cost_ratio)
-            st.markdown(f"""
-            <div class="refer-box-caution">
-                <h3 style="margin-top:0;">⚠️ {t['decision_refer']}</h3>
-                <p style="font-size:1.05rem; margin-bottom:0;">{msg}</p>
-            </div>
-            """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Running the branches, with the architecture lit stage by stage
+# ---------------------------------------------------------------------------
+def running_caption(lang: str, stage_name: str) -> str:
+    return ui.esc(tr(lang, "cap_running", stage="\x00")).replace("\x00", f"<b>{ui.esc(stage_name)}</b>")
+
+
+class ArchTracker:
+    """Keeps the block states during a run and redraws the diagram at each stage."""
+
+    def __init__(self, lang: str, placeholder, states: dict, metadata_present: bool):
+        self.lang, self.ph, self.states = lang, placeholder, dict(states)
+        self.metadata_present, self.active = metadata_present, []
+
+    def render(self, caption: str, progress: float | None = None) -> None:
+        self.ph.markdown(ui.architecture_html(self.lang, self.states, (), caption, progress), unsafe_allow_html=True)
+
+    def light(self, blocks, caption: str, hold: float = HOLD, progress: float | None = None) -> None:
+        for b in self.active:
+            if self.states.get(b) == "active":
+                self.states[b] = "done"
+        if not self.metadata_present:
+            blocks = [b for b in blocks if b != "meta_classifier"]
+        self.active = list(blocks)
+        for b in self.active:
+            self.states[b] = "active"
+        self.render(caption, progress)
+        if hold > 0:
+            time.sleep(hold)
+
+    def settle(self, states: dict) -> None:
+        self.states.update(states)
+        self.active = []
+
+    def reset_branch(self, b: str) -> None:
+        for blk in ui.BRANCH_BLOCKS[b]:
+            self.states[blk] = "idle"
+        self.states[ui.INPUT_BLOCK[b]] = "ready"
+
+
+class StageClock:
+    """Time per stage from the on_stage calls, leaving out the time each stage stays lit."""
+
+    def __init__(self):
+        self.ms, self.cur, self.t = {}, None, time.perf_counter()
+
+    def enter(self, stage: str) -> None:
+        now = time.perf_counter()
+        if self.cur is not None:
+            self.ms[self.cur] = self.ms.get(self.cur, 0.0) + (now - self.t) * 1000.0
+        self.cur = stage
+
+    def resume(self) -> None:
+        self.t = time.perf_counter()
+
+    def stop(self) -> None:
+        self.enter(None)
+
+
+def stage_callback(tracker: ArchTracker, lang: str, b: str, hold: float):
+    def on_stage(stage: str) -> None:
+        tracker.light(ui.STAGE_BLOCKS[b].get(stage, ()), running_caption(lang, tr(lang, f"stg_{b}_{stage}")), hold)
+    return on_stage
+
+
+def _plain(d: dict | None) -> dict:
+    """numpy numbers to Python numbers, so results serialise and compare cleanly."""
+    out = {}
+    for k, v in (d or {}).items():
+        if isinstance(v, (np.floating, np.integer)):
+            v = v.item()
+        out[k] = v
+    return out
+
+
+def _base(inp: dict) -> dict:
+    ref = inp["kind"] == "reference"
+    return {"input_sig": inp["sig"], "case": inp["item"].get("vector_id", inp["idx"]) if ref else None,
+            "source_file": inp.get("name"), "expected": inp["item"].get("ground_truth") if ref else None}
+
+
+def run_heart(inp: dict, meta, on_stage=None, light: bool = False) -> dict:
+    out = _base(inp)
+    src = str(inp["path"]) if inp["kind"] == "reference" else inp["file"].getvalue()
+    res = analyse_heart(src, meta, on_stage=on_stage)
+    usable = res.withheld is None and res.model_output is not None
+    probs = dict(res.model_output.probabilities) if res.model_output is not None else None
+    t = res.timings_ms
+    out.update(
+        withheld=res.withheld, quality=_plain(res.quality), seconds=res.seconds_of_audio, windows=res.windows,
+        temperature=res.temperature, probs=probs if usable else None,
+        pred=res.predicted_class if usable else None,
+        confidence=(probs[res.predicted_class] if usable else None),
+        close_call=res.close_call if usable else None,
+        p=res.p_h if usable else None,
+        votes=dict(res.fused.votes) if usable else {}, weights=dict(res.fused.weights) if usable else {},
+        fusion=res.fusion, characteristics=_plain(res.characteristics), phase=res.systole_or_diastole,
+        front_ms=sum(t.get(k, 0.0) for k in ("load_and_resample", "quality_check", "front_end")) if t else None,
+        infer_ms=t.get("cnn_8bit"), spectrogram=None)
+    if not light and res.audio_8k is not None:
+        from core.spectrogram import spectrogram_png
+        out["spectrogram"] = spectrogram_png(res.pcm16())
+    return out
+
+
+def run_xray(inp: dict, meta, on_stage=None, light: bool = False) -> dict:
+    out = _base(inp)
+    src = str(inp["path"]) if inp["kind"] == "reference" else inp["file"].getvalue()
+    clock = StageClock()
+
+    def staged(stage: str) -> None:
+        clock.enter(stage)
+        if on_stage is not None:
+            on_stage(stage)
+        clock.resume()
+
+    model_out, fused, clahe, occ = analyse_xray(src, meta, on_stage=staged)
+    clock.stop()
+    probs = dict(model_out.probabilities)
+    pred = max(probs, key=probs.get)
+    out.update(withheld=None, probs=probs, pred=pred, confidence=probs[pred], close_call=None,
+               p=float(fused.p_abnormal), votes=dict(fused.votes), weights=dict(fused.weights),
+               secondary=_plain(model_out.secondary), front_ms=clock.ms.get("load_image"),
+               infer_ms=clock.ms.get("cnn_8bit"), occlusion=np.asarray(occ, dtype=float).round(4).tolist())
+    if not light:
+        from core.descriptors import vision_descriptors
+        from lung.predict import _load_img_from_source
+
+        img01 = _load_img_from_source(src)
+        d = vision_descriptors(img01)
+        out.update(img_uri=ui.png_uri(img01), clahe_uri=ui.png_uri(clahe),
+                   descriptors={k: d.get(k) for k in ("dense_area_pct", "distribution", "predominant_zone",
+                                                      "pattern", "texture_heterogeneity")})
+    return out
+
+
+def run_branch(b: str, inp: dict, meta, on_stage=None, light: bool = False) -> dict:
+    try:
+        return (run_heart if b == "heart" else run_xray)(inp, meta, on_stage=on_stage, light=light)
+    except Exception as exc:          # shown in the card as a warning, never as a red error
+        out = _base(inp)
+        out.update(error=f"{type(exc).__name__}: {exc}", pred=None, confidence=None, p=None)
+        return out
+
+
+def add_record(b: str, out: dict, batch: bool = False) -> None:
+    """One row of the case log, newest first."""
+    ss = st.session_state
+    ss.seq += 1
+    correct = (out["pred"] == out["expected"]) if out.get("expected") and out.get("pred") else None
+    ss.records.insert(0, {
+        "seq": ss.seq, "time": datetime.now(timezone.utc).strftime("%H:%M:%S"), "branch": b,
+        "case": out.get("case"), "source_file": out.get("source_file"), "finding": out.get("pred"),
+        "confidence": out.get("confidence"), "expected": out.get("expected"), "correct": correct,
+        "p_abnormal": out.get("p"), "front_ms": out.get("front_ms"), "infer_ms": out.get("infer_ms"),
+        "withheld": bool(out.get("withheld") or out.get("error")), "batch": batch})
+    del ss.records[MAX_RECORDS:]
+
+
+def branch_final_states(b: str, out: dict, metadata_present: bool) -> dict:
+    view = {x: {"included": True, "waiting": False, "result": out if x == b else None} for x in BRANCHES}
+    view.update(metadata=metadata_present, decision=None)
+    s = ui.resting_states(view)
+    return {k: s[k] for k in (*ui.BRANCH_BLOCKS[b], "meta_classifier")}
+
+
+def run_batch(lang: str, tracker: ArchTracker) -> None:
+    """Chiron's screening batch: every reference case of both branches, graded against its label."""
+    items = manifest()
+    total = sum(len(items[b]) for b in BRANCHES) or 1
+    done = 0
+    for b in BRANCHES:
+        tracker.reset_branch(b)
+        blocks, n = list(ui.BRANCH_BLOCKS[b]), len(items[b])
+        for i, item in enumerate(items[b]):
+            if i % 4 == 0 or i == n - 1:
+                caption = ui.esc(tr(lang, "cap_batch", branch=branch_label(lang, b), i=i + 1, n=n))
+                tracker.light(blocks, caption, hold=0, progress=done / total)
+            inp = {"kind": "reference", "waiting": False, "idx": i, "item": item, "path": TEST_DATA / item["file"],
+                   "name": item.get("source_file") or item["file"], "sig": ("reference", i)}
+            add_record(b, run_branch(b, inp, None, light=True), batch=True)
+            done += 1
+        tracker.settle({k: "done" for k in blocks})
+    tracker.render(ui.esc(tr(lang, "cap_batch_done")), progress=1.0)
+
+
+def run_pending(lang: str, arch_ph, inputs: dict, meta, meta_sig, base_states: dict) -> None:
+    ss = st.session_state
+    pending = list(ss.pending)
+    tracker = ArchTracker(lang, arch_ph, base_states, meta is not None)
+    if "batch" in pending:
+        run_batch(lang, tracker)
+    todo = [b for b in BRANCHES if not inputs[b]["waiting"]
+            and (b in pending or ("visit" in pending and ss.get(f"inc_{b}", True)))]
+    hold = HOLD if "visit" in pending else HOLD * 0.6
+    for b in todo:
+        tracker.reset_branch(b)
+    for b in todo:
+        out = run_branch(b, inputs[b], meta, on_stage=stage_callback(tracker, lang, b, hold))
+        out["meta_sig"] = meta_sig
+        ss.results[b] = out
+        add_record(b, out)
+        tracker.settle(branch_final_states(b, out, meta is not None))
+    if todo:
+        results_now = {b: current_result(b, inputs[b]) for b in BRANCHES}
+        visit = visit_summary(results_now, meta_sig)
+        if visit["state"] in ("made", "none"):
+            tracker.light(("decision",), running_caption(lang, tr(lang, "stg_decision")), hold)
+            tracker.light(("report",), running_caption(lang, tr(lang, "stg_report")), hold)
+        ss.focus = "done" if "visit" in pending else f"{todo[0]}_done" if len(todo) == 1 else "done"
+    elif "batch" in pending:
+        ss.focus = "batch_done"
+    ss.pending = []
+    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Page sections
+# ---------------------------------------------------------------------------
+def audio_bytes(inp: dict) -> bytes | None:
+    if inp.get("waiting"):
+        return None
+    return file_bytes(str(inp["path"])) if inp["kind"] == "reference" else inp["file"].getvalue()
+
+
+def withheld_reason(lang: str, res: dict) -> str:
+    if res.get("withheld") == "quality_check":
+        q = res.get("quality") or {}
+        return tr(lang, "reason_quality_check", hi=q.get("hi_band"), thr=q.get("threshold"))
+    return tr(lang, f"reason_{res.get('withheld')}")
+
+
+def region_text(lang: str, occ) -> str | None:
+    if occ is None:
+        return None
+    a = np.asarray(occ, dtype=float).reshape(3, 3)
+    if a.max() <= 0:
+        return tr(lang, "none_detected")
+    r, c = divmod(int(a.argmax()), 3)
+    return tr(lang, "region", zone=tr(lang, ("z_upper", "z_middle", "z_lower")[r]), side=tr(lang, f"side_{c}"))
+
+
+def show_case(lang: str, b: str, inp: dict, res: dict) -> None:
+    """Chiron's case-detail overlay, as a Streamlit dialog."""
+    @st.dialog(tr(lang, "case_title"), width="large")
+    def dialog():
+        if res.get("case") is not None:
+            sub = (f'{branch_label(lang, b)} · {tr(lang, "case_n")} {res["case"] + 1} · '   # numbered from 1, as in Chiron
+                   f'{tr(lang, "source")}: {res.get("source_file")}')
         else:
-            msg = t["decision_routine_desc"].format(p_any=decision.p_any, tau=threshold)
-            st.markdown(f"""
-            <div class="refer-box-normal">
-                <h3 style="margin-top:0;">✅ {t['decision_routine']}</h3>
-                <p style="font-size:1.05rem; margin-bottom:0;">{msg}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            sub = f'{branch_label(lang, b)} · {tr(lang, "upload_tag")}'
+        st.markdown(f'<p class="cn-case-sub">{ui.esc(sub)}</p>', unsafe_allow_html=True)
+        if b == "heart":
+            data = audio_bytes(inp)
+            if data:
+                st.audio(data, format="audio/wav")
+        else:
+            st.markdown(ui.xray_media_html(lang, res), unsafe_allow_html=True)
+        detail = dict(res)
+        if b == "xray":
+            detail["region"] = region_text(lang, res.get("occlusion"))
+        clin = clinical(lang, b, res["pred"]) if res.get("pred") else None
+        st.markdown(ui.case_html(lang, b, detail, clin, reference_lines(lang)[b], tr(lang, f"dataset_{b}")),
+                    unsafe_allow_html=True)
 
-        col_h, col_l = st.columns([1, 1], gap="medium")
+    dialog()
 
-        # -------------------------------------------------------------------
-        # Heart Branch Results Panel
-        # -------------------------------------------------------------------
-        with col_h:
-            st.markdown(f"#### {t['heart_eval_header']}")
-            if heart_res is not None:
-                if heart_res.withheld:
-                    reason_text = t.get(f"reason_{heart_res.withheld}", heart_res.withheld)
-                    st.warning(t["withheld_warn"].format(reason=reason_text))
-                elif heart_res.fused is not None and heart_res.model_output is not None:
-                    st.metric(
-                        t["calibrated_prob"],
-                        f"{heart_res.fused.p_abnormal:.1%}",
-                        help=f"Temperature calibrated (T = {heart_res.temperature:.3f})" if heart_res.temperature else "Uncalibrated",
-                    )
 
-                    st.markdown(f"**{t['top_categories']}**")
-                    probs = heart_res.model_output.probabilities
-                    df_h = pd.DataFrame({
-                        "Condition": list(probs.keys()),
-                        "Probability": [f"{v:.1%}" for v in probs.values()],
-                    })
-                    st.dataframe(df_h, use_container_width=True, hide_index=True)
+def render_result(lang: str, b: str, inp: dict, res: dict) -> None:
+    floor = st.session_state.get(f"floor_{b}", 0.60)
+    if res.get("withheld"):
+        st.markdown(f'<div class="cn-verdict uncertain">{ui.esc(tr(lang, "not_conclusive"))}</div>', unsafe_allow_html=True)
+        st.warning(tr(lang, "withheld_warn", reason=withheld_reason(lang, res)))
+    else:
+        st.markdown(ui.one_line(ui.verdict_html(lang, b, res, floor), ui.bars_html(lang, b, res.get("probs") or {}),
+                                ui.fusion_html(lang, b, res)), unsafe_allow_html=True)
+    if inp["kind"] == "upload":
+        st.markdown(ui.upload_tag_html(lang), unsafe_allow_html=True)
+    if b == "heart":
+        data = audio_bytes(inp)
+        if data:
+            st.audio(data, format="audio/wav")
+            st.markdown(f'<span class="cn-cap">{ui.esc(tr(lang, "media_audio"))}</span>', unsafe_allow_html=True)
+        st.markdown(ui.spectrogram_html(lang, res.get("spectrogram")), unsafe_allow_html=True)
+    else:
+        st.markdown(ui.xray_media_html(lang, res), unsafe_allow_html=True)
 
-                    st.markdown(f"**{t['biomarkers_header']}**")
-                    ch = heart_res.characteristics
-                    hr = ch.get("heart_rate_bpm")
-                    seg_ok = ch.get("segmentation_ok")
-                    phase = heart_res.systole_or_diastole
 
-                    st.write(f"- {t['heart_rate']}: **{hr:.0f} bpm**" if hr else f"- {t['heart_rate']}: N/A")
-                    st.write(f"- {t['segmentation_status']}: **{t['segmentation_ok'] if seg_ok else t['segmentation_fail']}**")
-                    
-                    if phase == "systole":
-                        st.write(f"- {t['murmur_timing']}: **{t['systole']}**")
-                    elif phase == "diastole":
-                        st.write(f"- {t['murmur_timing']}: **{t['diastole']}**")
-                    elif phase == "neither":
-                        st.write(f"- {t['murmur_timing']}: **{t['neither']}**")
-                    else:
-                        st.write(f"- {t['murmur_timing']}: **{t['unknown_phase']}**")
+def render_card(lang: str, b: str, inp: dict, res: dict | None) -> None:
+    ss = st.session_state
+    included = ss.get(f"inc_{b}", True)
+    items = manifest()[b]
+    if not included:
+        st.markdown(ui.dim_card_css(b), unsafe_allow_html=True)
+    with st.container(key=f"node_{b}"):
+        st.markdown(ui.node_head_html(lang, b), unsafe_allow_html=True)
+        c1, c2 = st.columns([1, 1.25], vertical_alignment="center")
+        c1.toggle(tr(lang, "include"), value=True, key=f"inc_{b}", on_change=set_focus, args=("decision",))
+        sources = ["reference", "upload"]
+        c2.radio(tr(lang, "src_reference"), sources, index=sources.index(inp["kind"]), key=f"src_{b}_{lang}",
+                 horizontal=True, label_visibility="collapsed", on_change=on_source, args=(b, f"src_{b}_{lang}"),
+                 format_func=lambda v: tr(lang, "src_reference" if v == "reference" else "src_upload"))
+        if not included:
+            st.markdown(f'<div class="cn-note">{ui.esc(tr(lang, "excluded_note"))}</div>', unsafe_allow_html=True)
+        if inp["kind"] == "upload":
+            st.file_uploader(tr(lang, "upload_audio" if b == "heart" else "live_image"),
+                             type=["wav"] if b == "heart" else ["png", "jpg", "jpeg"], key=f"up_{b}",
+                             on_change=on_upload, args=(b,), help=tr(lang, f"upload_hint_{b}"))
+        running = b in ss.pending or ("visit" in ss.pending and included and not inp["waiting"])
+        if running:
+            st.markdown(ui.analysing_html(lang), unsafe_allow_html=True)
+        elif inp["waiting"]:
+            st.markdown(ui.no_result_html(lang, "upload_waiting"), unsafe_allow_html=True)
+        elif res is None:
+            st.markdown(ui.no_result_html(lang), unsafe_allow_html=True)
+        elif res.get("error"):
+            st.warning(tr(lang, "analysis_failed", branch=branch_label(lang, b), err=res["error"]))
+        else:
+            render_result(lang, b, inp, res)
+        st.markdown(ui.meta_line_html(lang, b, None if running else res, reference_info()["bytes"][b]),
+                    unsafe_allow_html=True)
+        st.slider(tr(lang, "floor"), min_value=0.05, max_value=0.95, value=0.60, step=0.01, key=f"floor_{b}",
+                  help=tr(lang, "floor_note"), on_change=set_focus, args=(b,))
+        if inp["kind"] == "reference" and items:
+            n1, n2, n3 = st.columns([1, 1.1, 1], vertical_alignment="center")
+            n1.button(tr(lang, "prev"), key=f"prev_{b}", on_click=step, args=(b, -1), width="stretch")
+            n2.markdown(ui.counter_html(lang, inp["idx"], len(items)), unsafe_allow_html=True)
+            n3.button(tr(lang, "next"), key=f"next_{b}", on_click=step, args=(b, 1), width="stretch")
+        a1, a2 = st.columns(2)
+        a1.button(tr(lang, "run_this"), key=f"run_{b}", on_click=queue, args=(b, b), width="stretch",
+                  disabled=inp["waiting"])
+        if a2.button(tr(lang, "view_case"), key=f"detail_{b}", type="primary", width="stretch",
+                     disabled=res is None or bool(res.get("error")) or running):
+            show_case(lang, b, inp, res)
 
-                    st.markdown(f"**{t['fusion_breakdown']}**")
-                    fused = heart_res.fused
-                    for vote_name, vote_val in fused.votes.items():
-                        v_label = t.get(f"vote_{vote_name}", vote_name)
-                        w_val = fused.weights.get(vote_name, 0.0)
-                        st.write(f"- {v_label}: `{vote_val:.1%}` ({t['weight_label']}: {w_val:.2f})")
-            else:
-                st.info("Heart sound analysis not performed.")
 
-        # -------------------------------------------------------------------
-        # Lung Branch Results Panel
-        # -------------------------------------------------------------------
-        with col_l:
-            st.markdown(f"#### {t['lung_eval_header']}")
-            if lung_res is not None:
-                l_model_out, l_fused_out = lung_res
-                st.metric(
-                    t["calibrated_prob"],
-                    f"{l_fused_out.p_abnormal:.1%}",
-                    help="Kermany calibrated probability",
-                )
+def render_patient(lang: str, meta) -> None:
+    ss = st.session_state
+    with st.container(key="cn_patient"):
+        st.markdown(ui.panel_head(tr(lang, "patient_title"), tr(lang, "patient_note")), unsafe_allow_html=True)
+        c = st.columns([1, 1.1, 1, 1, 1.1, 2.5])
+        common = dict(on_change=set_focus, args=("meta",))
+        none_label = tr(lang, "not_recorded")
+        c[0].number_input(tr(lang, "age"), min_value=0.0, max_value=120.0, value=None, step=1.0, key="m_age",
+                          placeholder=none_label, **common)
+        sexes, answers = [None, "female", "male"], [None, True, False]
+        sex = ss.get("meta_sex") if ss.get("meta_sex") in sexes else None
+        preg = ss.get("meta_preg") if ss.get("meta_preg") in answers else None
+        c[1].selectbox(tr(lang, "sex"), sexes, index=sexes.index(sex), key=f"m_sex_{lang}",
+                       on_change=remember, args=("meta_sex", f"m_sex_{lang}", "meta"),
+                       format_func=lambda v: none_label if v is None else tr(lang, f"sex_{v}"))
+        c[2].number_input(tr(lang, "height"), min_value=20.0, max_value=250.0, value=None, step=1.0, key="m_height",
+                          placeholder=none_label, **common)
+        c[3].number_input(tr(lang, "weight_kg"), min_value=0.5, max_value=300.0, value=None, step=0.5, key="m_weight",
+                          placeholder=none_label, **common)
+        c[4].selectbox(tr(lang, "pregnant"), answers, index=answers.index(preg), key=f"m_preg_{lang}",
+                       on_change=remember, args=("meta_preg", f"m_preg_{lang}", "meta"),
+                       format_func=lambda v: none_label if v is None else tr(lang, "yes" if v else "no"))
+        c[5].multiselect(tr(lang, "symptoms"), sorted(SYMPTOMS),
+                         default=[s for s in (ss.get("meta_symp") or []) if s in SYMPTOMS],
+                         key=f"m_symp_{lang}", placeholder=none_label,
+                         on_change=remember, args=("meta_symp", f"m_symp_{lang}", "meta"),
+                         format_func=lambda s: tr(lang, f"symp_{s}"))
+        n = 0 if meta is None else sum(v is not None for v in (meta.age_years, meta.sex, meta.height_cm,
+                                                               meta.weight_kg, meta.pregnant)) + len(meta.symptoms)
+        note = tr(lang, "meta_none") if not n else tr(lang, "meta_some", n=n)
+        st.markdown(f'<div class="cn-note">{ui.esc(note)}</div>', unsafe_allow_html=True)
 
-                st.markdown(f"**{t['top_categories']}**")
-                probs_l = l_model_out.probabilities
-                df_l = pd.DataFrame({
-                    "Condition": list(probs_l.keys()),
-                    "Probability": [f"{v:.1%}" for v in probs_l.values()],
-                })
-                st.dataframe(df_l, use_container_width=True, hide_index=True)
 
-                st.markdown(f"**{t['texture_biomarkers']}**")
-                sec = l_model_out.secondary
-                dense = sec.get("dense_area_pct")
-                asym = sec.get("asymmetry_index")
-                het = sec.get("texture_heterogeneity")
+def visit_json(visit: dict, ratio: float, meta, results_now: dict) -> str:
+    tau = 1.0 / (1.0 + ratio)
+    decision = VisitDecision(refer=visit["p_any"] >= tau, p_any=visit["p_any"], cost_ratio=ratio,
+                             p_heart=visit["p"].get("heart"), p_xray=visit["p"].get("xray"))
 
-                if dense is not None: st.write(f"- {t['dense_area']}: **{dense:.1f}%**")
-                if asym is not None: st.write(f"- {t['asymmetry']}: **{asym:.3f}**")
-                if het is not None: st.write(f"- {t['heterogeneity']}: **{het:.2f}**")
+    def branch(r):
+        if r is None:
+            return None
+        keys = ("case", "source_file", "expected", "withheld", "pred", "confidence", "p", "votes", "weights")
+        return {k: r.get(k) for k in keys}
 
-                st.markdown(f"**{t['characteristics_header']}**")
-                characteristics = pd.DataFrame({
-                    "Characteristic": list(sec),
-                    "Value": [f"{value:.4g}" for value in sec.values()],
-                })
-                st.dataframe(characteristics, use_container_width=True, hide_index=True)
+    return json.dumps({
+        "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "note": "CardioNary public demo: a demonstration, not a diagnosis.",
+        "decision": {"refer": decision.refer, "p_any": decision.p_any, "threshold": tau,
+                     "cost_ratio": decision.cost_ratio, "p_heart": decision.p_heart, "p_xray": decision.p_xray},
+        "heart": branch(results_now["heart"]), "xray": branch(results_now["xray"]),
+        "patient_details": None if meta is None else {
+            "age_years": meta.age_years, "sex": meta.sex, "height_cm": meta.height_cm, "weight_kg": meta.weight_kg,
+            "pregnant": meta.pregnant, "symptoms": sorted(meta.symptoms)},
+    }, indent=2)
 
-                if clahe_preview is not None:
-                    st.image(clahe_preview, width=220, caption=t["clahe_label"])
 
-                if occlusion_preview is not None:
-                    st.markdown(f"**{t['occlusion_label']}**")
-                    fig, ax = plt.subplots(figsize=(3.2, 3.0), dpi=100)
-                    low = float(np.min(occlusion_preview))
-                    high = float(np.max(occlusion_preview))
-                    if high - low < 1e-8:
-                        high = low + 1e-8
-                    heatmap = ax.imshow(occlusion_preview, cmap="Blues", vmin=low, vmax=high)
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-                    for row in range(3):
-                        for col in range(3):
-                            ax.text(
-                                col, row, f"{occlusion_preview[row, col]:+.3f}",
-                                ha="center", va="center", color="#102a43", fontsize=8,
-                            )
-                    fig.colorbar(heatmap, ax=ax, fraction=0.046, pad=0.04)
-                    fig.tight_layout()
-                    st.pyplot(fig, clear_figure=True)
-                    plt.close(fig)
+def render_decision(lang: str, visit: dict, meta, results_now: dict) -> None:
+    ss = st.session_state
+    with st.container(key="cn_decision"):
+        st.markdown(ui.panel_head(tr(lang, "decision_title"), tr(lang, "decision_hint")), unsafe_allow_html=True)
+        c1, c2 = st.columns([1, 2.6], gap="large")
+        with c1:
+            st.button(tr(lang, "analyse_visit"), type="primary", key="btn_visit", on_click=queue,
+                      args=("visit", "done"), width="stretch")
+            st.slider(tr(lang, "cost_ratio"), min_value=1.0, max_value=10.0, value=4.0, step=0.5, key="cost_ratio",
+                      help=tr(lang, "cost_ratio_help"), on_change=set_focus, args=("decision",))
+            ratio = float(ss.cost_ratio)
+            st.markdown(f'<div class="cn-note">{ui.esc(tr(lang, "threshold_line", tau=f"{1 / (1 + ratio):.3f}"))}</div>',
+                        unsafe_allow_html=True)
+        with c2:
+            if "visit" in ss.pending:
+                st.markdown(ui.analysing_html(lang), unsafe_allow_html=True)
+                return
+            st.markdown(ui.decision_html(lang, visit, ratio), unsafe_allow_html=True)
+            if visit["stale"] and visit["state"] in ("made", "none"):
+                st.markdown(f'<div class="cn-stale">{ui.esc(tr(lang, "stale_note"))}</div>', unsafe_allow_html=True)
+            if visit["state"] == "made":
+                st.download_button(tr(lang, "export_visit"), data=visit_json(visit, ratio, meta, results_now),
+                                   file_name="cardionary_visit_summary.json", mime="application/json", key="dl_visit")
 
-                st.markdown(f"**{t['fusion_breakdown']}**")
-                if set(l_fused_out.votes) == {"cnn"}:
-                    st.info(t["fusion_fallback"])
-                for vote_name, vote_val in l_fused_out.votes.items():
-                    v_label = t.get(f"vote_{vote_name}", vote_name)
-                    w_val = l_fused_out.weights.get(vote_name, 0.0)
-                    st.write(f"- {v_label}: `{vote_val:.1%}` ({t['weight_label']}: {w_val:.2f})")
-            else:
-                st.info("Chest X-ray analysis not performed.")
 
-        # -------------------------------------------------------------------
-        # Export Clinical Triage Summary (JSON)
-        # -------------------------------------------------------------------
-        st.divider()
-        summary_payload = {
-            "patient_id": anon_id,
-            "refer": decision.refer if decision else None,
-            "p_any": decision.p_any if decision else None,
-            "threshold": threshold,
-            "cost_ratio": float(cost_ratio),
-            "p_heart": p_heart,
-            "p_xray": p_xray,
-            "demographics": {
-                "age_years": patient_meta.age_years,
-                "sex": patient_meta.sex,
-                "height_cm": patient_meta.height_cm,
-                "weight_kg": patient_meta.weight_kg,
-                "pregnant": patient_meta.pregnant,
-                "symptoms": list(patient_meta.symptoms),
-            },
-        }
+def batch_stats(records: list) -> dict:
+    """Chiron's accuracy cards, over the latest result of each reference case."""
+    ss = st.session_state
+    out = {}
+    for b in BRANCHES:
+        latest = {}
+        for r in records:
+            if r["branch"] == b and r.get("expected") and r.get("case") is not None and r["case"] not in latest:
+                latest[r["case"]] = r
+        rows = list(latest.values())
+        floor = ss.get(f"floor_{b}", 0.60)
+        conclusive = [r for r in rows if r.get("confidence") is not None and r["confidence"] >= floor]
+        ok = sum(1 for r in conclusive if r.get("correct"))
+        times = [r["infer_ms"] for r in rows if r.get("infer_ms") is not None]
+        out[b] = {"n": len(rows), "total": len(manifest()[b]), "graded": len(conclusive), "ok": ok,
+                  "uncertain": len(rows) - len(conclusive),
+                  "accuracy": ok / len(conclusive) if conclusive else None,
+                  "mean_ms": float(np.mean(times)) if times else 0.0}
+    return out
 
-        st.download_button(
-            label=f"📄 {t['export_btn']}",
-            data=json.dumps(summary_payload, indent=2),
-            file_name=f"{anon_id}_triage_summary.json",
-            mime="application/json",
-            use_container_width=True,
-        )
+
+def records_csv(records: list) -> bytes:
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["seq", "time_utc", "type", "case", "source_file", "finding", "confidence", "expected", "match",
+                "p_abnormal", "signal_ms", "analysis_ms", "withheld", "batch"])
+    for r in reversed(records):
+        w.writerow([r["seq"], r["time"], r["branch"], r.get("case"), r.get("source_file"), r.get("finding"),
+                    None if r.get("confidence") is None else round(r["confidence"], 4), r.get("expected"),
+                    r.get("correct"), None if r.get("p_abnormal") is None else round(r["p_abnormal"], 4),
+                    None if r.get("front_ms") is None else round(r["front_ms"], 2),
+                    None if r.get("infer_ms") is None else round(r["infer_ms"], 2), r.get("withheld"), r.get("batch")])
+    return buf.getvalue().encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Page
+# ---------------------------------------------------------------------------
+def main() -> None:
+    st.set_page_config(page_title="CardioNary", page_icon=ui.favicon(), layout="wide",
+                       initial_sidebar_state="collapsed")
+    init_state()
+    ss = st.session_state
+    lang = ss.get("lang", "en")
+    st.markdown(ui.CSS, unsafe_allow_html=True)
+
+    inputs = {b: current_input(b) for b in BRANCHES}
+    meta = current_metadata()
+    meta_sig = meta_signature(meta)
+    results_now = {b: current_result(b, inputs[b]) for b in BRANCHES}
+    visit = visit_summary(results_now, meta_sig)
+    base_states = ui.resting_states(arch_view(inputs, results_now, meta, visit))
+
+    with st.container(key="cn_header"):
+        h1, h2, h3 = st.columns([5, 1.4, 1.7], vertical_alignment="center")
+        models = {"cardiac": (MODELS / "chiron_cardio_v1_int8.tflite").exists(),
+                  "pulmonary": (MODELS / "chiron_pulmo_v1_int8.tflite").exists()}
+        h1.markdown(ui.header_html(lang, models), unsafe_allow_html=True)
+        h2.selectbox(tr(lang, "language"), list(LANGS), format_func=LANGS.get, key="lang")
+        h3.button(tr(lang, "run_selftest"), type="primary", key="btn_batch", on_click=queue, args=("batch",),
+                  width="stretch")
+    st.markdown(ui.demo_bar_html(lang), unsafe_allow_html=True)
+
+    with st.container(key="cn_arch"):
+        arch_ph = st.empty()
+    focus, caption = focus_and_caption(lang, inputs)
+    if ss.pending:
+        focus, caption = (), ui.esc(tr(lang, "analysing"))
+    arch_ph.markdown(ui.architecture_html(lang, base_states, focus, caption), unsafe_allow_html=True)
+
+    for col, b in zip(st.columns(2, gap="medium"), BRANCHES):
+        with col:
+            render_card(lang, b, inputs[b], results_now[b])
+
+    render_patient(lang, meta)
+    render_decision(lang, visit, meta, results_now)
+
+    with st.container(key="cn_acc"):
+        st.markdown(ui.panel_head(tr(lang, "accuracy_title"), tr(lang, "accuracy_note"))
+                    + ui.accuracy_html(lang, batch_stats(ss.records), reference_lines(lang)), unsafe_allow_html=True)
+    with st.container(key="cn_chart"):
+        st.markdown(ui.panel_head(tr(lang, "history_title"), tr(lang, "history_note")), unsafe_allow_html=True)
+        st.iframe(ui.chart_html(lang, ss.records), height=214)
+    with st.container(key="cn_log"):
+        l1, l2, l3 = st.columns([3.4, 1, 1], vertical_alignment="bottom")
+        l1.markdown(ui.panel_head(tr(lang, "log_title")), unsafe_allow_html=True)
+        l2.download_button(tr(lang, "export"), data=records_csv(ss.records), file_name="cardionary_case_log.csv",
+                           mime="text/csv", key="dl_csv", width="stretch", disabled=not ss.records)
+        l3.button(tr(lang, "purge"), key="btn_purge", on_click=clear_records, width="stretch", disabled=not ss.records)
+        st.markdown(ui.log_html(lang, ss.records), unsafe_allow_html=True)
+    st.markdown(ui.footer_html(lang), unsafe_allow_html=True)
+
+    if ss.pending:
+        run_pending(lang, arch_ph, inputs, meta, meta_sig, base_states)
 
 
 if __name__ == "__main__":
