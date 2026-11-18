@@ -47,47 +47,15 @@ def _predict_int8(interp, img01_batch, mu, sd):
 
 
 def _safe_clahe_view(img01: np.ndarray) -> np.ndarray:
-    """Contrast-enhanced view for display, with pure-numpy fallback if cv2 is absent."""
-    try:
-        import cv2
-        u8 = np.clip(img01 * 255.0, 0, 255).astype(np.uint8)
-        return cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(u8)
-    except ImportError:
-        lo, hi = np.percentile(img01, [2, 98])
-        scaled = np.clip((img01 - lo) / (hi - lo), 0, 1) if hi > lo else img01
-        return (scaled * 255.0).astype(np.uint8)
+    """Return the same CLAHE view used by feature extraction and evaluation."""
+    from lung.model.clahe import clahe_view
+    return clahe_view(img01)
 
 
 def _safe_image_features(img01: np.ndarray) -> dict:
-    """Secondary texture features using core.descriptors with cv2 optional enhancement."""
-    from core.descriptors import vision_descriptors
-    desc = vision_descriptors(img01)
-    zones = desc.get("zone_distribution_pct", {})
-    row = {
-        "dense_area_pct": desc["dense_area_pct"],
-        "asymmetry_index": desc["asymmetry_index"],
-        "zone_upper_pct": zones.get("upper", 0.0),
-        "zone_middle_pct": zones.get("middle", 0.0),
-        "zone_lower_pct": zones.get("lower", 0.0),
-        "largest_region_fraction": desc["largest_region_fraction"],
-        "regions_detected": desc["regions_detected"],
-        "mean_intensity": desc["mean_intensity"],
-        "texture_heterogeneity": desc["texture_heterogeneity"],
-    }
-    try:
-        import cv2
-        h, w = img01.shape
-        b = int(0.08 * h)
-        roi = np.zeros((h, w), dtype=bool)
-        roi[b:h - b, b:w - b] = True
-        roi[:, int(0.44 * w):int(0.56 * w)] = False
-        u8 = np.clip(img01 * 255.0, 0, 255).astype(np.uint8)
-        for name, clip in (("clahe_std_1", 1.0), ("clahe_std_2", 2.0), ("clahe_std_4", 4.0)):
-            f = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8))
-            row[name] = round(float(np.std(f.apply(u8)[roi])), 1)
-    except ImportError:
-        pass
-    return row
+    """Return the one 12-column definition used to fit and apply the feature vote."""
+    from lung.model.features import characteristics
+    return characteristics(img01)
 
 
 def _calibrate_probability(probability: float, temperature: float) -> float:

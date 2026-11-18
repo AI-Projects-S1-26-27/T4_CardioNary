@@ -143,6 +143,41 @@ def bootstrap_auroc_interval(
     return float(lower), float(upper)
 
 
+def bootstrap_accuracy_interval(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    n_bootstrap: int = 1000,
+    seed: int = 0,
+    confidence: float = 0.95,
+) -> tuple[float, float]:
+    """Percentile bootstrap interval for patient-level accuracy at p >= 0.5."""
+    y_true = np.asarray(y_true, dtype=int)
+    y_prob = np.asarray(y_prob, dtype=float)
+
+    if len(y_true) != len(y_prob) or len(y_true) == 0:
+        raise ValueError("y_true and y_prob must have equal non-zero lengths")
+    if n_bootstrap < 1:
+        raise ValueError("n_bootstrap must be at least 1")
+    if not 0 < confidence < 1:
+        raise ValueError("confidence must be between 0 and 1")
+    if not np.isin(y_true, [0, 1]).all():
+        raise ValueError("y_true must contain only binary labels 0 and 1")
+    if not np.isfinite(y_prob).all() or ((y_prob < 0) | (y_prob > 1)).any():
+        raise ValueError("y_prob must contain finite probabilities in [0, 1]")
+
+    rng = np.random.default_rng(seed)
+    n = len(y_true)
+    predictions = y_prob >= 0.5
+    scores = np.empty(n_bootstrap, dtype=float)
+    for draw in range(n_bootstrap):
+        indices = rng.integers(0, n, size=n)
+        scores[draw] = np.mean(predictions[indices] == y_true[indices])
+
+    alpha = (1.0 - confidence) / 2.0
+    lower, upper = np.quantile(scores, [alpha, 1.0 - alpha])
+    return float(lower), float(upper)
+
+
 def evaluate_predictions(
     patient_ids: np.ndarray,
     y_true: np.ndarray,
@@ -165,10 +200,16 @@ def evaluate_predictions(
         n_bootstrap=n_bootstrap,
         seed=seed,
     )
+    accuracy_ci = bootstrap_accuracy_interval(
+        labels, probabilities,
+        n_bootstrap=n_bootstrap,
+        seed=seed,
+    )
 
     return {
         "n_patients": int(len(patient_ids)),
         "accuracy": float(accuracy_score(labels, probabilities >= 0.5)),
+        "accuracy_ci_95": list(accuracy_ci),
         "auroc": auroc,
         "sensitivity_at_90_specificity": sensitivity_at_specificity(
             labels, probabilities, target_specificity=0.90

@@ -3,6 +3,7 @@ import pytest
 
 from lung.eval.metrics import (
     aggregate_patients,
+    bootstrap_accuracy_interval,
     bootstrap_auroc_interval,
     evaluate_predictions,
     expected_calibration_error,
@@ -58,6 +59,17 @@ def test_bootstrap_interval_is_reproducible():
     assert 0.0 <= first[0] <= first[1] <= 1.0
 
 
+def test_accuracy_bootstrap_interval_is_reproducible_and_patient_level():
+    labels = np.array([0, 0, 1, 1])
+    probs = np.array([0.1, 0.8, 0.7, 0.9])
+
+    first = bootstrap_accuracy_interval(labels, probs, n_bootstrap=100, seed=12)
+    second = bootstrap_accuracy_interval(labels, probs, n_bootstrap=100, seed=12)
+
+    assert first == second
+    assert 0.0 <= first[0] <= first[1] <= 1.0
+
+
 def test_evaluate_predictions_returns_required_metrics():
     ids = np.array(["A", "B", "C", "D", "E", "F"])
     labels = np.array([0, 0, 0, 1, 1, 1])
@@ -70,6 +82,7 @@ def test_evaluate_predictions_returns_required_metrics():
     required = {
         "n_patients",
         "accuracy",
+        "accuracy_ci_95",
         "auroc",
         "sensitivity_at_90_specificity",
         "ece",
@@ -82,5 +95,6 @@ def test_evaluate_predictions_returns_required_metrics():
     assert required.issubset(result.keys())
     assert result["n_patients"] == 6
     assert result["accuracy"] == 1.0
+    assert result["accuracy_ci_95"] == [1.0, 1.0]
     assert result["auroc"] == 1.0
     assert result["auroc_ci_95"] == [1.0, 1.0]

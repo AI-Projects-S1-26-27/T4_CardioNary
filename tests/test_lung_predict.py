@@ -28,6 +28,19 @@ def test_load_image_from_bytes_center_crops_and_resizes():
     assert 0.0 <= float(image.min()) <= float(image.max()) <= 1.0
 
 
+def test_display_path_uses_shared_features_and_clahe(monkeypatch):
+    from lung.model import clahe, features
+
+    image = np.zeros((96, 96), dtype=np.float32)
+    expected_features = {"clahe_mean": 1.0, "clahe_std": 2.0, "clahe_abs_laplacian": 3.0}
+    expected_view = np.full((96, 96), 7, dtype=np.uint8)
+    monkeypatch.setattr(features, "characteristics", lambda _image: expected_features)
+    monkeypatch.setattr(clahe, "clahe_view", lambda _image: expected_view)
+
+    assert predict._safe_image_features(image) == expected_features
+    assert predict._safe_clahe_view(image) is expected_view
+
+
 def test_analyse_xray_returns_calibrated_cnn_clahe_and_occlusion(monkeypatch):
     monkeypatch.setattr(predict, "_get_norm", lambda: (0.0, 1.0))
     monkeypatch.setattr(predict, "_get_interp", lambda: object())
