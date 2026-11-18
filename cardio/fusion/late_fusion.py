@@ -411,7 +411,8 @@ def save_fusion_params(
 @lru_cache(maxsize=1)
 def load_fusion_params() -> dict:
     """Load fitted numbers from reports/heart_fusion_params.json."""
-    params_path = Path("reports/heart_fusion_params.json")
+    # Anchored to the repository, so the dashboard works from any working folder.
+    params_path = Path(__file__).resolve().parents[2] / "reports" / "heart_fusion_params.json"
     if not params_path.exists():
         raise FileNotFoundError(f"Missing {params_path}. Run cardio.fusion.late_fusion to generate it.")
     return json.loads(params_path.read_text(encoding="utf-8"))

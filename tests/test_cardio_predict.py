@@ -197,3 +197,25 @@ def test_temperature_and_heart_fusion_are_used_once_they_exist(no_fusion_files, 
     assert seen["p_cnn"] == pytest.approx(1 - calibrated["Normal"])   # calibrated, as the roadmap says
     assert len(seen["features"]) == 17 and seen["metadata"] is meta
     assert res.fusion == "heart_fusion" and res.fused.weights == {"cnn": 0.5, "features": 0.5}
+
+
+FUSION_FILES = (REPO_ROOT / "cardio" / "fusion" / "late_fusion.py", REPO_ROOT / "reports" / "heart_fusion_params.json")
+
+
+@needs_model
+@pytest.mark.skipif(not all(p.exists() for p in FUSION_FILES), reason="fusion parameters not in this checkout")
+def test_the_real_heart_fusion_runs_from_any_working_folder(tmp_path, monkeypatch):
+    """The dashboard may be started from app/; the fitted numbers must still be found."""
+    from cardio.fusion import late_fusion
+
+    data = wav_bytes(*heartbeat())
+    monkeypatch.chdir(tmp_path)
+    late_fusion.load_fusion_params.cache_clear()
+    try:
+        plain = predict.analyse_heart(data)
+        assert plain.fusion == "heart_fusion" and "metadata" not in plain.fused.votes
+        assert sum(plain.fused.weights.values()) == pytest.approx(1.0)
+        with_details = predict.analyse_heart(data, PatientMetadata(age_years=30.0, sex="female"))
+        assert "metadata" in with_details.fused.votes and with_details.fused.weights["metadata"] <= 0.3 + 1e-9
+    finally:
+        late_fusion.load_fusion_params.cache_clear()
