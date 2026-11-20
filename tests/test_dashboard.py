@@ -4,13 +4,14 @@
   order, through on_stage, without changing their results;
 - every stage maps to blocks of the architecture;
 - the block states at rest follow the page (excluded, waiting, withheld, done);
-- the text is complete in both languages, with no emoji and no em dash.
+- the text is complete in all six languages, with no emoji and no em dash.
 """
 
 from __future__ import annotations
 
 import io
 import re
+import string
 import sys
 from pathlib import Path
 
@@ -145,7 +146,10 @@ def strings(value):
 
 
 def test_text_is_complete_without_emoji_or_em_dash():
-    assert set(text.APP["en"]) == set(text.APP["hi"])
+    assert list(text.LANGS) == ["en", "hi", "bn", "te", "mr", "ta"]        # the Chiron station's six
+    for lang in text.LANGS:
+        assert set(text.APP[lang]) == set(text.APP["en"]), lang
+        assert set(text.chiron()[lang]) == {"ui", "clinical"}, lang
     for lang in text.LANGS:
         for value in text.APP[lang].values():
             for s in strings(value):
@@ -156,6 +160,19 @@ def test_text_is_complete_without_emoji_or_em_dash():
     for lang in text.LANGS:                       # Chiron strings the case details show
         for key in ("generic_note", "phenotype_note", "vision_nondiscrim", "no_measurements"):
             assert chr(0x2014) not in text.tr(lang, key), (lang, key)
+
+
+def test_translations_keep_placeholders_and_block_shapes():
+    fields = lambda s: {f for _, f, _, _ in string.Formatter().parse(s) if f}
+    for lang in text.LANGS:
+        for key, en in text.APP["en"].items():
+            value = text.APP[lang][key]
+            if isinstance(en, tuple):          # architecture blocks: (bold lines, normal lines)
+                assert isinstance(value, tuple) and len(value) == 2 and all(value), (lang, key)
+            else:
+                assert fields(value) == fields(en), (lang, key)
+        assert text.class_name(lang, "heart", "MS") != "MS", lang      # clinical names exist in every language
+        assert text.tr(lang, "media_audio") != "Source heart sound" or lang == "en", lang
 
 
 def test_clinical_text_follows_the_class_order():

@@ -66,6 +66,9 @@ CSS = """
 .cn-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);display:inline-block;}
 .cn-dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok);}
 .cn-dot.off{background:var(--warn);}
+.stButton button [data-testid="stMarkdownContainer"],.stDownloadButton button [data-testid="stMarkdownContainer"]{
+ white-space:normal;overflow:visible;text-overflow:clip;line-height:1.25;}
+.stButton button p,.stDownloadButton button p{white-space:normal;}
 .cn-demo-bar{padding:8px 16px;background:var(--warn);color:#1b1300;font-weight:600;font-size:13px;border-radius:8px;}
 .cn-demo-bar b{margin-right:10px;letter-spacing:.8px;}
 .st-key-cn_arch,.st-key-cn_patient,.st-key-cn_decision,.st-key-cn_acc,.st-key-cn_chart,.st-key-cn_log{
@@ -166,7 +169,8 @@ ol.cn-actions{margin:0;padding-left:20px;} ol.cn-actions li{margin:3px 0;}
 .arch-svg{display:block;width:100%;min-width:760px;height:auto;}
 .arch-legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:8px;font-size:12px;color:var(--muted);}
 .arch-legend .sw{display:inline-block;width:16px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px;border:2px solid;}
-.arch-svg text{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Nirmala UI","Noto Sans Devanagari",sans-serif;}
+.arch-svg text{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Nirmala UI","Noto Sans Devanagari",
+ "Noto Sans Bengali","Noto Sans Telugu","Noto Sans Tamil",sans-serif;}
 .ab rect.fr{fill:#1c232c;stroke:#3a434e;stroke-width:1.6;}
 .ab text.t{fill:#e6edf3;font-weight:700;font-size:14.5px;}
 .ab text.s{fill:#a3adb8;font-size:12.5px;}
@@ -572,6 +576,12 @@ def xray_media_html(lang: str, res: dict) -> str:
     return f'<div class="cn-media">{"".join(figs)}</div>' if figs else ""
 
 
+def xray_preview_html(lang: str, uri: str) -> str:
+    """The chest X-ray of a card before it is analysed."""
+    return (f'<div class="cn-media"><figure><img class="px" src="{uri}" alt="">'
+            f'<span class="cn-cap">{esc(tr(lang, "media_xray"))}</span></figure></div>')
+
+
 def upload_tag_html(lang: str) -> str:
     return f'<span class="cn-tag">{esc(tr(lang, "upload_tag"))}</span>'
 
@@ -643,7 +653,7 @@ def chart_html(lang: str, records: list) -> str:
     labels = {"heart": tr(lang, "cardiac"), "xray": tr(lang, "pulmonary"), "miss": tr(lang, "legend_miss"),
               "empty": tr(lang, "log_empty")}
     return """<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{margin:0;background:%(panel)s;color:%(muted)s;font:12px -apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Nirmala UI",sans-serif;color-scheme:dark;}
+html,body{margin:0;background:%(panel)s;color:%(muted)s;font:12px -apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Nirmala UI","Noto Sans Devanagari","Noto Sans Bengali","Noto Sans Telugu","Noto Sans Tamil",sans-serif;color-scheme:dark;}
 #chart{display:block;width:100%%;height:180px;}
 .lg{display:flex;gap:16px;margin:6px 2px 0;}
 .lg i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:6px;border-radius:2px;}

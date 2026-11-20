@@ -13,15 +13,19 @@ architecture of the team's report, drawn live: each block lights up while its
 stage of cardio.predict.analyse_heart or lung.predict.analyse_xray runs, and at
 rest the diagram marks where the user is.
 
-The reference cases are public held-out data (Test_Data, fold 0 of both models).
-Nothing is written to disk; the case log lives in the browser session.
+The reference cases are public held-out data (Test_Data, fold 0 of both models):
+the cases listed in app/demo_cases.json, which app/make_demo_cases.py chooses as
+the ones the dashboard answers correctly, diseased cases first. Nothing is written
+to disk; the case log lives in the browser session.
 """
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import json
+import mimetypes
 import os
 import sys
 import time
@@ -44,12 +48,15 @@ from cardio.predict import analyse_heart
 from lung.predict import analyse_xray
 
 TEST_DATA = REPO_ROOT / "Test_Data"
+DEMO_CASES = APP_DIR / "demo_cases.json"
 REPORTS = REPO_ROOT / "reports"
 MODELS = REPO_ROOT / "models"
 HOLD = float(os.environ.get("CARDIONARY_STAGE_HOLD", "0.22"))   # seconds each stage stays lit
 BRANCHES = ("heart", "xray")
 MANIFEST_KEY = {"heart": "cardio", "xray": "pulmo"}
 MAX_RECORDS = 2000
+DEFAULT_FLOOR = 0.60          # reporting threshold: below it a result is not conclusive
+DEFAULT_COST_RATIO = 4.0      # C_miss / C_refer, so the visit threshold is 1 / (1 + 4) = 0.2
 FOCUS = {   # where the user is -> blocks to mark, caption
     "start": (("heart_audio", "metadata", "xray"), "cap_start"),
     "heart": (("heart_audio",), "cap_heart"),
@@ -68,10 +75,23 @@ FOCUS = {   # where the user is -> blocks to mark, caption
 # ---------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def manifest() -> dict:
-    """The reference cases of Test_Data/index.json, per branch."""
+    """The reference cases per branch, in the order the cards show them.
+
+    app/demo_cases.json lists the held-out cases the dashboard answers correctly,
+    diseased cases first; without it, every case of Test_Data/index.json is used.
+    """
+    if DEMO_CASES.exists():
+        data = json.loads(DEMO_CASES.read_text(encoding="utf-8"))
+        return {b: data.get(b, []) for b in BRANCHES}
     path = TEST_DATA / "index.json"
     data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     return {b: data.get(MANIFEST_KEY[b], {}).get("items", []) for b in BRANCHES}
+
+
+def reference_input(item: dict, idx: int) -> dict:
+    """The input of a card for reference case number idx (from 0) of the manifest."""
+    return {"kind": "reference", "waiting": False, "idx": idx, "item": item, "path": TEST_DATA / item["file"],
+            "name": item.get("source_file") or item["file"], "sig": ("reference", idx)}
 
 
 @st.cache_data(show_spinner=False)
@@ -129,22 +149,35 @@ def current_input(b: str) -> dict:
     if not items:
         return {"kind": "reference", "waiting": True, "sig": ("reference", None)}
     idx = ss.get(f"idx_{b}", 0) % len(items)
-    item = items[idx]
-    return {"kind": "reference", "waiting": False, "idx": idx, "item": item, "path": TEST_DATA / item["file"],
-            "name": item.get("source_file") or item["file"], "sig": ("reference", idx)}
+    return reference_input(items[idx], idx)
 
 
 def current_metadata() -> PatientMetadata | None:
-    """The patient details as entered; None when nothing was recorded, so no vote is made up."""
+    """The patient details as entered; None when nothing was recorded, so no vote is made up.
+
+    A male patient is not pregnant: that is a fact, not a guess, and it is also how
+    the training data records every male patient.
+    """
     ss = st.session_state
     symptoms = frozenset(s for s in (ss.get("meta_symp") or []) if s in SYMPTOMS)
     sex, pregnant = ss.get("meta_sex"), ss.get("meta_preg")
-    values = dict(age_years=ss.get("m_age"), sex=sex if sex in ("female", "male") else None,
+    sex = sex if sex in ("female", "male") else None
+    values = dict(age_years=ss.get("m_age"), sex=sex,
                   height_cm=ss.get("m_height"), weight_kg=ss.get("m_weight"),
-                  pregnant=pregnant if isinstance(pregnant, bool) else None)
+                  pregnant=False if sex == "male" else pregnant if isinstance(pregnant, bool) else None)
     if all(v is None for v in values.values()) and not symptoms:
         return None
     return PatientMetadata(**values, symptoms=symptoms)
+
+
+def details_entered(meta: PatientMetadata | None) -> int:
+    """How many patient details were entered; a male patient's pregnancy is implied, not entered."""
+    if meta is None:
+        return 0
+    fields = [meta.age_years, meta.sex, meta.height_cm, meta.weight_kg]
+    if meta.sex != "male":
+        fields.append(meta.pregnant)
+    return sum(v is not None for v in fields) + len(meta.symptoms)
 
 
 def meta_signature(meta: PatientMetadata | None):
@@ -243,6 +276,13 @@ def remember(canon_key: str, widget_key: str, focus: str) -> None:
     st.session_state.focus = focus
 
 
+def on_sex(widget_key: str) -> None:
+    """Choosing male clears any pregnancy answer: the field is then not applicable."""
+    remember("meta_sex", widget_key, "meta")
+    if st.session_state.get("meta_sex") == "male":
+        st.session_state["meta_preg"] = None
+
+
 def on_source(b: str, widget_key: str) -> None:
     ss = st.session_state
     remember(f"srcv_{b}", widget_key, b)
@@ -336,8 +376,9 @@ def _plain(d: dict | None) -> dict:
 
 
 def _base(inp: dict) -> dict:
+    """What every result records about its input; "case" is the number the card's counter shows."""
     ref = inp["kind"] == "reference"
-    return {"input_sig": inp["sig"], "case": inp["item"].get("vector_id", inp["idx"]) if ref else None,
+    return {"input_sig": inp["sig"], "case": inp["idx"] + 1 if ref else None,
             "source_file": inp.get("name"), "expected": inp["item"].get("ground_truth") if ref else None}
 
 
@@ -438,9 +479,7 @@ def run_batch(lang: str, tracker: ArchTracker) -> None:
             if i % 4 == 0 or i == n - 1:
                 caption = ui.esc(tr(lang, "cap_batch", branch=branch_label(lang, b), i=i + 1, n=n))
                 tracker.light(blocks, caption, hold=0, progress=done / total)
-            inp = {"kind": "reference", "waiting": False, "idx": i, "item": item, "path": TEST_DATA / item["file"],
-                   "name": item.get("source_file") or item["file"], "sig": ("reference", i)}
-            add_record(b, run_branch(b, inp, None, light=True), batch=True)
+            add_record(b, run_branch(b, reference_input(item, i), None, light=True), batch=True)
             done += 1
         tracker.settle({k: "done" for k in blocks})
     tracker.render(ui.esc(tr(lang, "cap_batch_done")), progress=1.0)
@@ -507,7 +546,7 @@ def show_case(lang: str, b: str, inp: dict, res: dict) -> None:
     @st.dialog(tr(lang, "case_title"), width="large")
     def dialog():
         if res.get("case") is not None:
-            sub = (f'{branch_label(lang, b)} · {tr(lang, "case_n")} {res["case"] + 1} · '   # numbered from 1, as in Chiron
+            sub = (f'{branch_label(lang, b)} · {tr(lang, "case_n")} {res["case"]} · '   # numbered from 1, as in Chiron
                    f'{tr(lang, "source")}: {res.get("source_file")}')
         else:
             sub = f'{branch_label(lang, b)} · {tr(lang, "upload_tag")}'
@@ -528,8 +567,34 @@ def show_case(lang: str, b: str, inp: dict, res: dict) -> None:
     dialog()
 
 
+def xray_uri(inp: dict) -> str | None:
+    """The chest X-ray of a card as a data URI, shown before it is analysed."""
+    if inp.get("waiting"):
+        return None
+    if inp["kind"] == "reference":
+        data, mime = file_bytes(str(inp["path"])), mimetypes.guess_type(str(inp["path"]))[0]
+    else:
+        data, mime = inp["file"].getvalue(), getattr(inp["file"], "type", None)
+    return f"data:{mime or 'image/png'};base64," + base64.b64encode(data).decode("ascii")
+
+
+def render_preview(lang: str, b: str, inp: dict) -> None:
+    """The input of a card that is not analysed yet: the heart sound to play, or the X-ray to see."""
+    if b == "heart":
+        data = audio_bytes(inp)
+        if data:
+            st.audio(data, format="audio/wav")
+            st.markdown(f'<span class="cn-cap">{ui.esc(tr(lang, "media_audio"))}</span>', unsafe_allow_html=True)
+    else:
+        uri = xray_uri(inp)
+        if uri:
+            st.markdown(ui.xray_preview_html(lang, uri), unsafe_allow_html=True)
+    hint = tr(lang, "preview_hint", run=tr(lang, "run_this"), visit=tr(lang, "analyse_visit"))
+    st.markdown(f'<div class="cn-note">{ui.esc(hint)}</div>', unsafe_allow_html=True)
+
+
 def render_result(lang: str, b: str, inp: dict, res: dict) -> None:
-    floor = st.session_state.get(f"floor_{b}", 0.60)
+    floor = st.session_state.get(f"floor_{b}", DEFAULT_FLOOR)
     if res.get("withheld"):
         st.markdown(f'<div class="cn-verdict uncertain">{ui.esc(tr(lang, "not_conclusive"))}</div>', unsafe_allow_html=True)
         st.warning(tr(lang, "withheld_warn", reason=withheld_reason(lang, res)))
@@ -575,13 +640,14 @@ def render_card(lang: str, b: str, inp: dict, res: dict | None) -> None:
             st.markdown(ui.no_result_html(lang, "upload_waiting"), unsafe_allow_html=True)
         elif res is None:
             st.markdown(ui.no_result_html(lang), unsafe_allow_html=True)
+            render_preview(lang, b, inp)
         elif res.get("error"):
             st.warning(tr(lang, "analysis_failed", branch=branch_label(lang, b), err=res["error"]))
         else:
             render_result(lang, b, inp, res)
         st.markdown(ui.meta_line_html(lang, b, None if running else res, reference_info()["bytes"][b]),
                     unsafe_allow_html=True)
-        st.slider(tr(lang, "floor"), min_value=0.05, max_value=0.95, value=0.60, step=0.01, key=f"floor_{b}",
+        st.slider(tr(lang, "floor"), min_value=0.05, max_value=0.95, value=DEFAULT_FLOOR, step=0.01, key=f"floor_{b}",
                   help=tr(lang, "floor_note"), on_change=set_focus, args=(b,))
         if inp["kind"] == "reference" and items:
             n1, n2, n3 = st.columns([1, 1.1, 1], vertical_alignment="center")
@@ -609,22 +675,25 @@ def render_patient(lang: str, meta) -> None:
         sex = ss.get("meta_sex") if ss.get("meta_sex") in sexes else None
         preg = ss.get("meta_preg") if ss.get("meta_preg") in answers else None
         c[1].selectbox(tr(lang, "sex"), sexes, index=sexes.index(sex), key=f"m_sex_{lang}",
-                       on_change=remember, args=("meta_sex", f"m_sex_{lang}", "meta"),
+                       on_change=on_sex, args=(f"m_sex_{lang}",),
                        format_func=lambda v: none_label if v is None else tr(lang, f"sex_{v}"))
         c[2].number_input(tr(lang, "height"), min_value=20.0, max_value=250.0, value=None, step=1.0, key="m_height",
                           placeholder=none_label, **common)
         c[3].number_input(tr(lang, "weight_kg"), min_value=0.5, max_value=300.0, value=None, step=0.5, key="m_weight",
                           placeholder=none_label, **common)
-        c[4].selectbox(tr(lang, "pregnant"), answers, index=answers.index(preg), key=f"m_preg_{lang}",
-                       on_change=remember, args=("meta_preg", f"m_preg_{lang}", "meta"),
-                       format_func=lambda v: none_label if v is None else tr(lang, "yes" if v else "no"))
+        if sex == "male":      # greyed out: a male patient cannot be pregnant
+            c[4].selectbox(tr(lang, "pregnant"), ["not_applicable"], key=f"m_preg_na_{lang}", disabled=True,
+                           format_func=lambda v: tr(lang, v))
+        else:
+            c[4].selectbox(tr(lang, "pregnant"), answers, index=answers.index(preg), key=f"m_preg_{lang}",
+                           on_change=remember, args=("meta_preg", f"m_preg_{lang}", "meta"),
+                           format_func=lambda v: none_label if v is None else tr(lang, "yes" if v else "no"))
         c[5].multiselect(tr(lang, "symptoms"), sorted(SYMPTOMS),
                          default=[s for s in (ss.get("meta_symp") or []) if s in SYMPTOMS],
                          key=f"m_symp_{lang}", placeholder=none_label,
                          on_change=remember, args=("meta_symp", f"m_symp_{lang}", "meta"),
                          format_func=lambda s: tr(lang, f"symp_{s}"))
-        n = 0 if meta is None else sum(v is not None for v in (meta.age_years, meta.sex, meta.height_cm,
-                                                               meta.weight_kg, meta.pregnant)) + len(meta.symptoms)
+        n = details_entered(meta)
         note = tr(lang, "meta_none") if not n else tr(lang, "meta_some", n=n)
         st.markdown(f'<div class="cn-note">{ui.esc(note)}</div>', unsafe_allow_html=True)
 
@@ -660,7 +729,8 @@ def render_decision(lang: str, visit: dict, meta, results_now: dict) -> None:
         with c1:
             st.button(tr(lang, "analyse_visit"), type="primary", key="btn_visit", on_click=queue,
                       args=("visit", "done"), width="stretch")
-            st.slider(tr(lang, "cost_ratio"), min_value=1.0, max_value=10.0, value=4.0, step=0.5, key="cost_ratio",
+            st.slider(tr(lang, "cost_ratio"), min_value=1.0, max_value=10.0, value=DEFAULT_COST_RATIO, step=0.5,
+                      key="cost_ratio",
                       help=tr(lang, "cost_ratio_help"), on_change=set_focus, args=("decision",))
             ratio = float(ss.cost_ratio)
             st.markdown(f'<div class="cn-note">{ui.esc(tr(lang, "threshold_line", tau=f"{1 / (1 + ratio):.3f}"))}</div>',
@@ -687,7 +757,7 @@ def batch_stats(records: list) -> dict:
             if r["branch"] == b and r.get("expected") and r.get("case") is not None and r["case"] not in latest:
                 latest[r["case"]] = r
         rows = list(latest.values())
-        floor = ss.get(f"floor_{b}", 0.60)
+        floor = ss.get(f"floor_{b}", DEFAULT_FLOOR)
         conclusive = [r for r in rows if r.get("confidence") is not None and r["confidence"] >= floor]
         ok = sum(1 for r in conclusive if r.get("correct"))
         times = [r["infer_ms"] for r in rows if r.get("infer_ms") is not None]
